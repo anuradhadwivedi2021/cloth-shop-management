@@ -5,6 +5,8 @@ New schema changes must be added as a new entry in MIGRATIONS, never by
 editing an older one.
 """
 
+from db.migration_4 import MIGRATION_4
+
 MIGRATION_1 = """
 CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
@@ -388,6 +390,7 @@ MIGRATIONS = {
     1: MIGRATION_1,
     2: MIGRATION_2,
     3: MIGRATION_3,
+    4: MIGRATION_4,
 }
 
 
