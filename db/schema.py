@@ -284,8 +284,32 @@ WHEN (SELECT status FROM purchases WHERE id = OLD.purchase_id) != 'draft'
 BEGIN SELECT RAISE(ABORT, 'confirmed purchase lines are immutable'); END;
 """
 
+MIGRATION_2 = """
+-- Sales: facts the receipt and tax split need, kept with the saved bill
+ALTER TABLE sales ADD COLUMN prices_include_tax INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sales ADD COLUMN intra_state        INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sales ADD COLUMN calc_method        TEXT;
+ALTER TABLE sales ADD COLUMN tendered_paise     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sales ADD COLUMN change_paise       INTEGER NOT NULL DEFAULT 0;
+CREATE TRIGGER sales_no_edit_2 BEFORE UPDATE OF
+    prices_include_tax, intra_state, calc_method, tendered_paise, change_paise
+ON sales
+BEGIN SELECT RAISE(ABORT, 'saved bills are immutable'); END;
+
+-- Bills parked at the counter (max 10 at once, one slot each)
+CREATE TABLE held_bills (
+    slot        INTEGER PRIMARY KEY CHECK (slot BETWEEN 1 AND 10),
+    user_id     INTEGER REFERENCES users(id),
+    customer_id INTEGER REFERENCES customers(id),
+    note        TEXT,
+    cart_json   TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+"""
+
 MIGRATIONS = {
     1: MIGRATION_1,
+    2: MIGRATION_2,
 }
 
 

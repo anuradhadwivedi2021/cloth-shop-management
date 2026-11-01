@@ -2,6 +2,7 @@ import pytest
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from db.connection import WrongPasswordError, open_db, transaction
+from db.schema import MIGRATION_1, MIGRATIONS
 
 
 @pytest.fixture
@@ -68,7 +69,30 @@ def test_migration_runs_only_once(tmp_path):
     path = tmp_path / "shop.db"
     open_db(path, "pw").close()
     c = open_db(path, "pw")
-    assert c.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 1
+    versions = [r[0] for r in c.execute("SELECT version FROM schema_version ORDER BY version")]
+    assert versions == sorted(MIGRATIONS)  # each migration recorded exactly once
+    c.close()
+
+
+def test_old_database_is_upgraded_without_losing_data(tmp_path):
+    """A database created at schema version 1 gets the later migrations and keeps its rows."""
+    path = tmp_path / "shop.db"
+    raw = sqlcipher.connect(str(path))
+    raw.execute("PRAGMA key = 'pw'")
+    raw.executescript(
+        "BEGIN;" + MIGRATION_1 + "CREATE TABLE schema_version ("
+        "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));"
+        "INSERT INTO schema_version(version) VALUES (1);"
+        "INSERT INTO products(name) VALUES ('Old shirt');"
+        "COMMIT;"
+    )
+    raw.close()
+
+    c = open_db(path, "pw")
+    assert c.execute("SELECT name FROM products").fetchone()[0] == "Old shirt"
+    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == max(MIGRATIONS)
+    c.execute("SELECT prices_include_tax, tendered_paise FROM sales")  # new columns exist
+    c.execute("SELECT slot FROM held_bills")  # new table exists
     c.close()
 
 
