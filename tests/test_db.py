@@ -60,7 +60,7 @@ def test_all_core_tables_exist(conn):
         "settings", "users", "audit_log", "products", "variants", "suppliers",
         "customers", "tax_rules", "number_series", "purchases", "purchase_lines",
         "sales", "sale_lines", "payments", "stock_movements", "variant_stock",
-        "schema_version",
+        "schema_version", "held_bills", "sale_returns", "sale_return_lines", "store_credit_ledger",
     }
     assert expected <= names
 

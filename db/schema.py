@@ -307,9 +307,87 @@ CREATE TABLE held_bills (
 );
 """
 
+MIGRATION_3 = """
+-- Credit notes for sales returns and exchanges. Each one is linked to the
+-- original bill (sale_id) and, for an exchange, to the replacement bill.
+-- Rule: total_paise = due_adjusted + refund + store_credit + credit_applied.
+CREATE TABLE sale_returns (
+    id                  INTEGER PRIMARY KEY,
+    series              TEXT NOT NULL,
+    number              INTEGER NOT NULL,
+    credit_note_no      TEXT NOT NULL UNIQUE,
+    fin_year            TEXT NOT NULL,
+    sale_id             INTEGER NOT NULL REFERENCES sales(id),
+    customer_id         INTEGER REFERENCES customers(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    outcome             TEXT NOT NULL CHECK (outcome IN ('refund','store_credit','exchange')),
+    reason              TEXT NOT NULL,
+    taxable_paise       INTEGER NOT NULL,
+    tax_paise           INTEGER NOT NULL DEFAULT 0,
+    round_off_paise     INTEGER NOT NULL DEFAULT 0,
+    total_paise         INTEGER NOT NULL CHECK (total_paise >= 0),
+    due_adjusted_paise  INTEGER NOT NULL DEFAULT 0,
+    refund_paise        INTEGER NOT NULL DEFAULT 0,
+    store_credit_paise  INTEGER NOT NULL DEFAULT 0,
+    credit_applied_paise INTEGER NOT NULL DEFAULT 0,
+    exchange_sale_id    INTEGER REFERENCES sales(id),
+    override_user_id    INTEGER REFERENCES users(id),
+    override_reason     TEXT,
+    idempotency_key     TEXT UNIQUE,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (series, fin_year, number)
+);
+CREATE INDEX idx_sale_returns_sale ON sale_returns(sale_id);
+
+CREATE TABLE sale_return_lines (
+    id               INTEGER PRIMARY KEY,
+    return_id        INTEGER NOT NULL REFERENCES sale_returns(id),
+    sale_line_id     INTEGER NOT NULL REFERENCES sale_lines(id),
+    variant_id       INTEGER NOT NULL REFERENCES variants(id),
+    product_name     TEXT NOT NULL,
+    size             TEXT NOT NULL,
+    colour           TEXT NOT NULL,
+    qty              INTEGER NOT NULL CHECK (qty > 0),
+    taxable_paise    INTEGER NOT NULL,
+    tax_paise        INTEGER NOT NULL DEFAULT 0,
+    line_total_paise INTEGER NOT NULL,
+    reason           TEXT NOT NULL
+);
+CREATE INDEX idx_sale_return_lines_return ON sale_return_lines(return_id);
+CREATE INDEX idx_sale_return_lines_sale_line ON sale_return_lines(sale_line_id);
+
+-- Store credit given to a customer (issuing only; spending it is Phase 2).
+-- Balance = sum of amounts. Append-only.
+CREATE TABLE store_credit_ledger (
+    id           INTEGER PRIMARY KEY,
+    customer_id  INTEGER NOT NULL REFERENCES customers(id),
+    amount_paise INTEGER NOT NULL CHECK (amount_paise != 0),
+    doc_type     TEXT,
+    doc_id       INTEGER,
+    note         TEXT,
+    user_id      INTEGER REFERENCES users(id),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX idx_store_credit_customer ON store_credit_ledger(customer_id);
+
+CREATE TRIGGER sale_returns_no_update BEFORE UPDATE ON sale_returns
+BEGIN SELECT RAISE(ABORT, 'credit notes are immutable'); END;
+CREATE TRIGGER sale_returns_no_delete BEFORE DELETE ON sale_returns
+BEGIN SELECT RAISE(ABORT, 'credit notes cannot be deleted'); END;
+CREATE TRIGGER sale_return_lines_no_update BEFORE UPDATE ON sale_return_lines
+BEGIN SELECT RAISE(ABORT, 'credit note lines are immutable'); END;
+CREATE TRIGGER sale_return_lines_no_delete BEFORE DELETE ON sale_return_lines
+BEGIN SELECT RAISE(ABORT, 'credit note lines cannot be deleted'); END;
+CREATE TRIGGER store_credit_ledger_no_update BEFORE UPDATE ON store_credit_ledger
+BEGIN SELECT RAISE(ABORT, 'store credit ledger is append-only'); END;
+CREATE TRIGGER store_credit_ledger_no_delete BEFORE DELETE ON store_credit_ledger
+BEGIN SELECT RAISE(ABORT, 'store credit ledger is append-only'); END;
+"""
+
 MIGRATIONS = {
     1: MIGRATION_1,
     2: MIGRATION_2,
+    3: MIGRATION_3,
 }
 
 

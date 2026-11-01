@@ -120,8 +120,18 @@ def _settle_payments(payments, total, *, credit_ok, customer_id):
 
 
 # ---------- saving a bill ----------
+# ---------- saving a bill ----------
 
-def create_sale(
+def create_sale(conn, cart, payments, **kwargs) -> int:
+    """Save a finished bill in ONE transaction. Returns the sale id.
+
+    See `save_sale_in_transaction` for the arguments.
+    """
+    with transaction(conn):
+        return save_sale_in_transaction(conn, cart, payments, **kwargs)
+
+
+def save_sale_in_transaction(
     conn,
     cart,
     payments,
@@ -136,8 +146,18 @@ def create_sale(
     idempotency_key=None,
     held_slot=None,
     on_date=None,
+    credit_available_paise=0,
+    credit_reference=None,
 ) -> int:
     """Save a finished bill. Returns the sale id.
+
+    Must be called inside `with transaction(conn):` (create_sale does that for
+    you). Exchanges call this directly so the credit note and the replacement
+    bill are saved together.
+
+    credit_available_paise / credit_reference: value of a credit note that may
+    pay for this bill (exchange). Up to the bill total is used; it is recorded as
+    a non-cash 'store_credit' payment that points at the credit note number.
 
     cart: list of {"variant_id", "qty", optional "discount_paise" (item discount),
           optional "rate_percent" (owner-confirmed GST rate)}.
@@ -149,131 +169,136 @@ def create_sale(
     on = _on(on_date)
     key = (idempotency_key or "").strip() or None
 
-    with transaction(conn):
-        if key:
-            existing = conn.execute("SELECT id FROM sales WHERE idempotency_key = ?", (key,)).fetchone()
-            if existing:
-                return existing["id"]
+    if key:
+        existing = conn.execute("SELECT id FROM sales WHERE idempotency_key = ?", (key,)).fetchone()
+        if existing:
+            return existing["id"]
 
-        if conn.execute("SELECT 1 FROM users WHERE id = ? AND is_active = 1", (user_id,)).fetchone() is None:
-            raise ValueError("User not found or not active.")
-        if customer_id is not None and conn.execute(
-            "SELECT 1 FROM customers WHERE id = ? AND is_active = 1", (customer_id,)
-        ).fetchone() is None:
-            raise ValueError("Customer not found or not active.")
-        if salesperson_id is None:
-            salesperson_id = user_id
-        if not isinstance(cart, (list, tuple)) or not cart:
-            raise ValueError("A bill needs at least one item.")
+    if conn.execute("SELECT 1 FROM users WHERE id = ? AND is_active = 1", (user_id,)).fetchone() is None:
+        raise ValueError("User not found or not active.")
+    if customer_id is not None and conn.execute(
+        "SELECT 1 FROM customers WHERE id = ? AND is_active = 1", (customer_id,)
+    ).fetchone() is None:
+        raise ValueError("Customer not found or not active.")
+    if salesperson_id is None:
+        salesperson_id = user_id
+    if not isinstance(cart, (list, tuple)) or not cart:
+        raise ValueError("A bill needs at least one item.")
 
-        rules = load_tax_rules(conn) if mode == "regular" else []
-        tax_lines, variants = [], []
-        for item in cart:
-            qty = item.get("qty")
-            if not isinstance(qty, int) or qty <= 0:
-                raise ValueError("Quantity must be a whole number greater than zero.")
-            row = conn.execute(
-                "SELECT v.id, v.size, v.colour, v.price_override_paise, v.is_active AS v_active, "
-                "p.name, p.hsn, p.gst_rate_percent, p.default_price_paise, p.is_active AS p_active "
-                "FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?",
-                (item.get("variant_id"),),
-            ).fetchone()
-            if row is None:
-                raise ValueError("A product on this bill was not found.")
-            if not (row["v_active"] and row["p_active"]):
-                raise ValueError(f"{_label(row)} is inactive and cannot be sold.")
-            price = row["price_override_paise"]
-            if price is None:
-                price = row["default_price_paise"]
-            if price <= 0:
-                raise ValueError(f"{_label(row)} has no selling price. Set the price first.")
+    rules = load_tax_rules(conn) if mode == "regular" else []
+    tax_lines, variants = [], []
+    for item in cart:
+        qty = item.get("qty")
+        if not isinstance(qty, int) or qty <= 0:
+            raise ValueError("Quantity must be a whole number greater than zero.")
+        row = conn.execute(
+            "SELECT v.id, v.size, v.colour, v.price_override_paise, v.is_active AS v_active, "
+            "p.name, p.hsn, p.gst_rate_percent, p.default_price_paise, p.is_active AS p_active "
+            "FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?",
+            (item.get("variant_id"),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("A product on this bill was not found.")
+        if not (row["v_active"] and row["p_active"]):
+            raise ValueError(f"{_label(row)} is inactive and cannot be sold.")
+        price = row["price_override_paise"]
+        if price is None:
+            price = row["default_price_paise"]
+        if price <= 0:
+            raise ValueError(f"{_label(row)} has no selling price. Set the price first.")
 
-            line = {
-                "variant_id": row["id"],
-                "hsn": row["hsn"],
-                "qty": qty,
-                "unit_price_paise": price,
-                "discount_paise": item.get("discount_paise", 0),
-            }
-            if mode == "regular":
-                if item.get("rate_percent") is not None:
-                    line["rate_percent"] = item["rate_percent"]
-                elif row["gst_rate_percent"] is not None and not _has_rule_for(rules, row["hsn"], on):
-                    line["rate_percent"] = row["gst_rate_percent"]  # product rate when no HSN rule applies
-            tax_lines.append(line)
-            variants.append(row)
+        line = {
+            "variant_id": row["id"],
+            "hsn": row["hsn"],
+            "qty": qty,
+            "unit_price_paise": price,
+            "discount_paise": item.get("discount_paise", 0),
+        }
+        if mode == "regular":
+            if item.get("rate_percent") is not None:
+                line["rate_percent"] = item["rate_percent"]
+            elif row["gst_rate_percent"] is not None and not _has_rule_for(rules, row["hsn"], on):
+                line["rate_percent"] = row["gst_rate_percent"]  # product rate when no HSN rule applies
+        tax_lines.append(line)
+        variants.append(row)
 
-        calc = calculate_bill(
-            tax_lines,
-            on_date=on,
-            rules=rules,
-            mode=mode,
-            prices_include_tax=prices_include_tax,
-            bill_discount_paise=bill_discount_paise,
-            intra_state=intra_state,
-        )
-        total = calc["total_paise"]
-        applied, tendered, change, _due = _settle_payments(
-            payments, total, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id
-        )
+    calc = calculate_bill(
+        tax_lines,
+        on_date=on,
+        rules=rules,
+        mode=mode,
+        prices_include_tax=prices_include_tax,
+        bill_discount_paise=bill_discount_paise,
+        intra_state=intra_state,
+    )
+    total = calc["total_paise"]
+    credit_used = min(max(int(credit_available_paise or 0), 0), total)
+    applied, tendered, change, _due = _settle_payments(
+        payments, total - credit_used, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id
+    )
 
-        series, prefix = SALE_SERIES[mode]
-        fin_year = financial_year(on)
-        number, invoice_no = next_number(conn, series, fin_year, prefix)
+    series, prefix = SALE_SERIES[mode]
+    fin_year = financial_year(on)
+    number, invoice_no = next_number(conn, series, fin_year, prefix)
 
-        cur = conn.execute(
-            "INSERT INTO sales(series, number, invoice_no, fin_year, customer_id, salesperson_id, user_id, "
-            "tax_mode, subtotal_paise, discount_paise, taxable_paise, tax_paise, round_off_paise, "
-            "total_paise, idempotency_key, prices_include_tax, intra_state, calc_method, "
-            "tendered_paise, change_paise) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    cur = conn.execute(
+        "INSERT INTO sales(series, number, invoice_no, fin_year, customer_id, salesperson_id, user_id, "
+        "tax_mode, subtotal_paise, discount_paise, taxable_paise, tax_paise, round_off_paise, "
+        "total_paise, idempotency_key, prices_include_tax, intra_state, calc_method, "
+        "tendered_paise, change_paise) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            series, number, invoice_no, fin_year, customer_id, salesperson_id, user_id,
+            mode, calc["gross_paise"], calc["item_discount_paise"] + calc["bill_discount_paise"],
+            calc["taxable_paise"], calc["tax_paise"], calc["round_off_paise"],
+            total, key, int(prices_include_tax), int(intra_state), calc["method"],
+            tendered, change,
+        ),
+    )
+    sale_id = cur.lastrowid
+
+    allow_negative = get_bool(conn, "allow_negative_stock")
+    for line, row in zip(calc["lines"], variants):
+        conn.execute(
+            "INSERT INTO sale_lines(sale_id, variant_id, product_name, size, colour, hsn, qty, "
+            "unit_price_paise, discount_paise, taxable_paise, tax_rate_percent, tax_paise, "
+            "line_total_paise, tax_rule_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                series, number, invoice_no, fin_year, customer_id, salesperson_id, user_id,
-                mode, calc["gross_paise"], calc["item_discount_paise"] + calc["bill_discount_paise"],
-                calc["taxable_paise"], calc["tax_paise"], calc["round_off_paise"],
-                total, key, int(prices_include_tax), int(intra_state), calc["method"],
-                tendered, change,
+                sale_id, line["variant_id"], row["name"], row["size"], row["colour"], row["hsn"],
+                line["qty"], line["unit_price_paise"],
+                line["item_discount_paise"] + line["bill_discount_share_paise"],
+                line["taxable_paise"], line["rate_percent"], line["tax_paise"],
+                line["line_total_paise"], line["tax_rule_id"],
             ),
         )
-        sale_id = cur.lastrowid
-
-        allow_negative = get_bool(conn, "allow_negative_stock")
-        for line, row in zip(calc["lines"], variants):
-            conn.execute(
-                "INSERT INTO sale_lines(sale_id, variant_id, product_name, size, colour, hsn, qty, "
-                "unit_price_paise, discount_paise, taxable_paise, tax_rate_percent, tax_paise, "
-                "line_total_paise, tax_rule_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    sale_id, line["variant_id"], row["name"], row["size"], row["colour"], row["hsn"],
-                    line["qty"], line["unit_price_paise"],
-                    line["item_discount_paise"] + line["bill_discount_share_paise"],
-                    line["taxable_paise"], line["rate_percent"], line["tax_paise"],
-                    line["line_total_paise"], line["tax_rule_id"],
-                ),
+        try:
+            add_movement(
+                conn, line["variant_id"], -line["qty"], "sale",
+                doc_type="sale", doc_id=sale_id, user_id=user_id, allow_negative=allow_negative,
             )
-            try:
-                add_movement(
-                    conn, line["variant_id"], -line["qty"], "sale",
-                    doc_type="sale", doc_id=sale_id, user_id=user_id, allow_negative=allow_negative,
-                )
-            except InsufficientStockError as exc:
-                raise InsufficientStockError(f"{_label(row)}: {exc}") from exc
+        except InsufficientStockError as exc:
+            raise InsufficientStockError(f"{_label(row)}: {exc}") from exc
 
-        for pay in applied:
-            conn.execute(
-                "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
-                "VALUES ('sale', ?, ?, ?, ?, ?)",
-                (sale_id, pay["mode"], pay["amount_paise"], pay["reference"], user_id),
-            )
-
-        if held_slot is not None:
-            conn.execute("DELETE FROM held_bills WHERE slot = ?", (held_slot,))
-
-        log_event(
-            conn, "sale_created", user_id=user_id, entity="sale", entity_id=sale_id,
-            after={"invoice_no": invoice_no, "total_paise": total, "lines": len(calc["lines"])},
+    for pay in applied:
+        conn.execute(
+            "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
+            "VALUES ('sale', ?, ?, ?, ?, ?)",
+            (sale_id, pay["mode"], pay["amount_paise"], pay["reference"], user_id),
         )
-        return sale_id
+    if credit_used:
+        conn.execute(
+            "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
+            "VALUES ('sale', ?, 'store_credit', ?, ?, ?)",
+            (sale_id, credit_used, credit_reference, user_id),
+        )
 
+    if held_slot is not None:
+        conn.execute("DELETE FROM held_bills WHERE slot = ?", (held_slot,))
+
+    log_event(
+        conn, "sale_created", user_id=user_id, entity="sale", entity_id=sale_id,
+        after={"invoice_no": invoice_no, "total_paise": total, "lines": len(calc["lines"])},
+    )
+    return sale_id
 
 # ---------- reading a saved bill ----------
 
