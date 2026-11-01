@@ -26,13 +26,12 @@ from datetime import date
 from core.audit import log_event
 from core.numbering import financial_year, next_number
 from core.returns import _round_rupee, _share
-from core.roles import require_role
+from core.permissions import require_permission
 from core.sales import ACCEPTED_PAYMENT_MODES, _on
 from core.stock import InsufficientStockError, add_movement, get_stock
 from db.connection import transaction
 
 DEBIT_NOTE_SERIES = "DN"
-RETURN_ROLES = ("owner", "stock")
 SETTLEMENTS = ("refund", "credit")
 
 
@@ -117,7 +116,7 @@ def process_purchase_return(
             if existing:
                 return existing["id"]
 
-        require_role(conn, user_id, RETURN_ROLES, "return goods to a supplier")
+        require_permission(conn, user_id, "return_to_supplier", "return goods to a supplier")
         purchase = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
         if purchase is None:
             raise ValueError("Purchase not found.")

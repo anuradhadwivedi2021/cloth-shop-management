@@ -21,12 +21,11 @@ from datetime import date
 
 from core.audit import log_event
 from core.numbering import financial_year, next_number
-from core.roles import require_role
+from core.permissions import require_permission
 from core.stock import add_movement, get_stock
 from db.connection import transaction
 
 COUNT_SERIES = "CNT"
-COUNT_ROLES = ("owner", "stock")
 
 
 def _open_count(conn, count_id):
@@ -41,7 +40,7 @@ def _open_count(conn, count_id):
 def start_count(conn, *, user_id, variant_ids=None, category=None, rack=None, blind=False, note=None) -> int:
     """Start a count of the chosen variants (all active variants if no filter). Returns the count id."""
     with transaction(conn):
-        require_role(conn, user_id, COUNT_ROLES, "start a stock count")
+        require_permission(conn, user_id, "adjust_stock", "start a stock count")
         sql = (
             "SELECT v.id FROM variants v JOIN products p ON p.id = v.product_id "
             "WHERE v.is_active = 1"
@@ -87,7 +86,7 @@ def start_count(conn, *, user_id, variant_ids=None, category=None, rack=None, bl
 def record_count(conn, count_id, variant_id, counted_qty, *, user_id, reason=None) -> None:
     """Enter (or correct) the counted quantity of one variant while the count is open."""
     with transaction(conn):
-        require_role(conn, user_id, COUNT_ROLES, "enter stock counts")
+        require_permission(conn, user_id, "adjust_stock", "enter stock counts")
         _open_count(conn, count_id)
         if not isinstance(counted_qty, int) or counted_qty < 0:
             raise ValueError("Counted quantity must be a whole number, zero or more.")
@@ -132,7 +131,7 @@ def variance_report(conn, count_id) -> list:
 def apply_count(conn, count_id, *, approver_id) -> dict:
     """Owner approval: turn each difference into a stock movement. Returns a short summary."""
     with transaction(conn):
-        require_role(conn, approver_id, ("owner",), "approve a stock count")
+        require_permission(conn, approver_id, "approve_stock_count", "approve a stock count")
         count = _open_count(conn, count_id)
         lines = conn.execute(
             "SELECT * FROM stock_count_lines WHERE count_id = ? AND counted_qty IS NOT NULL ORDER BY id",
@@ -193,7 +192,7 @@ def cancel_count(conn, count_id, *, user_id, reason) -> None:
     if not (reason or "").strip():
         raise ValueError("A reason is required to cancel a stock count.")
     with transaction(conn):
-        require_role(conn, user_id, COUNT_ROLES, "cancel a stock count")
+        require_permission(conn, user_id, "adjust_stock", "cancel a stock count")
         count = _open_count(conn, count_id)
         conn.execute(
             "UPDATE stock_counts SET status = 'cancelled', closed_at = datetime('now','localtime'), "

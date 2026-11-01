@@ -7,20 +7,18 @@ and the audit entry are saved together or not at all. Nothing is deleted.
   mark_missing     sellable        -> gone (recorded as a 'missing' adjustment)
   review_returned  returned_pending-> sellable (fit for resale) or damaged
 
-Only the owner or stock staff may do these. Damaged and returned-pending
+Needs the "adjust_stock" permission (owner and stock staff by default). Damaged and returned-pending
 pieces are NOT sellable, so billing never sees them.
 """
 
 from core.audit import log_event
-from core.roles import require_role
+from core.permissions import require_permission
 from core.stock import add_movement
 from db.connection import transaction
 
-STOCK_ROLES = ("owner", "stock")
-
 
 def _check(conn, variant_id, qty, reason, user_id, action):
-    require_role(conn, user_id, STOCK_ROLES, action)
+    require_permission(conn, user_id, "adjust_stock", action)
     if not isinstance(qty, int) or qty <= 0:
         raise ValueError("Quantity must be a whole number greater than zero.")
     if not (reason or "").strip():
