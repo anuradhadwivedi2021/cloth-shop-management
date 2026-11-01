@@ -17,6 +17,7 @@ ALL_PERMISSIONS = {
     "change_price": "Change prices",
     "view_cost": "See purchase cost and margins",
     "view_products": "See products and stock",
+    "edit_products": "Add and edit products and variants",
     "view_customers": "See customer details",
     "edit_customers": "Create and edit customers",
     "receive_purchase": "Record and confirm purchases",
@@ -42,6 +43,7 @@ ROLE_DEFAULTS = {
     }),
     "stock": frozenset({
         "receive_purchase", "return_to_supplier", "adjust_stock", "print_labels", "view_products",
+        "edit_products",
     }),
     "accountant": frozenset({
         "view_reports", "export_reports", "view_cost", "view_products", "view_customers",
