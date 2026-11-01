@@ -20,6 +20,7 @@ ALL_PERMISSIONS = {
     "edit_products": "Add and edit products and variants",
     "view_customers": "See customer details",
     "edit_customers": "Create and edit customers",
+    "manage_customer_data": "Export, erase and review customer personal data",
     "receive_purchase": "Record and confirm purchases",
     "return_to_supplier": "Return goods to a supplier",
     "adjust_stock": "Count stock, record damaged or missing items",
