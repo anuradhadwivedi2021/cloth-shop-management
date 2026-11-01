@@ -1,248 +1,300 @@
-"""Suppliers and purchases.
+import pytest
 
-A purchase starts as a DRAFT and does not touch stock. Only confirming it adds
-stock (through stock movements), allocates the voucher number and records any
-payment, all in one transaction. A confirmed purchase can never be confirmed twice.
-
-All money is integer paise. Tax is rounded per line (half up); the bill total is
-rounded to the nearest rupee with the round-off kept as its own figure.
-The tax and rounding method must be confirmed with the owner's accountant.
-"""
-
-from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
-
-from core.numbering import financial_year, next_number
-from core.stock import add_movement
-from db.connection import transaction
-
-
-class PurchaseStateError(Exception):
-    """Raised when an action is not allowed for the purchase's current status."""
+import core.purchases as purchases_module
+from core.numbering import financial_year
+from core.products import create_product, generate_variants
+from core.purchases import (
+    PurchaseStateError,
+    calculate_purchase,
+    cancel_draft_purchase,
+    confirm_purchase,
+    create_draft_purchase,
+    create_supplier,
+    find_duplicate_purchase,
+    get_purchase,
+)
+from core.stock import get_stock
+from db.connection import open_db
 
 
-# ---------- suppliers ----------
-
-def create_supplier(
-    conn, name, *, contact_person=None, phone=None, email=None, address=None, gstin=None, state=None
-):
-    """Create a supplier. Returns the supplier id."""
-    name = (name or "").strip()
-    if not name:
-        raise ValueError("Supplier name is required.")
-    with transaction(conn):
-        cur = conn.execute(
-            "INSERT INTO suppliers(name, contact_person, phone, email, address, gstin, state) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (name, contact_person, phone, email, address, gstin, state),
-        )
-        return cur.lastrowid
+@pytest.fixture
+def conn(tmp_path):
+    c = open_db(tmp_path / "shop.db", "test-password")
+    yield c
+    c.close()
 
 
-# ---------- calculation (pure, no database) ----------
-
-def _tax_paise(qty: int, unit_cost_paise: int, rate_percent) -> int:
-    amount = Decimal(qty * unit_cost_paise) * Decimal(str(rate_percent)) / Decimal(100)
-    return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+@pytest.fixture
+def supplier(conn):
+    return create_supplier(conn, "Ravi Textiles", phone="9999999999")
 
 
-def calculate_purchase(lines, *, discount_paise: int = 0, freight_paise: int = 0):
-    """Work out line tax and invoice totals.
-
-    lines: list of dicts with variant_id, qty, unit_cost_paise, tax_rate_percent (optional).
-    Returns a dict with the computed lines and subtotal, tax, discount, freight,
-    round_off and total (all paise).
-    """
-    if not lines:
-        raise ValueError("A purchase needs at least one line.")
-    if discount_paise < 0 or freight_paise < 0:
-        raise ValueError("Discount and freight cannot be negative.")
-
-    computed = []
-    subtotal = 0
-    tax_total = 0
-    for line in lines:
-        qty = line.get("qty")
-        cost = line.get("unit_cost_paise")
-        rate = line.get("tax_rate_percent", 0)
-        if not isinstance(qty, int) or qty <= 0:
-            raise ValueError("Quantity must be a whole number greater than zero.")
-        if not isinstance(cost, int) or cost < 0:
-            raise ValueError("Unit cost must be a non-negative amount in paise.")
-        if Decimal(str(rate)) < 0:
-            raise ValueError("Tax rate cannot be negative.")
-        tax = _tax_paise(qty, cost, rate)
-        computed.append(
-            {
-                "variant_id": line.get("variant_id"),
-                "qty": qty,
-                "unit_cost_paise": cost,
-                "tax_rate_percent": float(rate),
-                "tax_paise": tax,
-                "line_total_paise": qty * cost + tax,
-            }
-        )
-        subtotal += qty * cost
-        tax_total += tax
-
-    before_round = subtotal + tax_total + freight_paise - discount_paise
-    if before_round < 0:
-        raise ValueError("Discount cannot be larger than the invoice amount.")
-    rounded = ((before_round + 50) // 100) * 100
-    return {
-        "lines": computed,
-        "subtotal_paise": subtotal,
-        "tax_paise": tax_total,
-        "discount_paise": discount_paise,
-        "freight_paise": freight_paise,
-        "round_off_paise": rounded - before_round,
-        "total_paise": rounded,
-    }
+@pytest.fixture
+def variants(conn):
+    """Three variants of one shirt: M-Blue, L-Blue, M-Red."""
+    pid = create_product(conn, "Shirt")
+    ids = generate_variants(conn, pid, ["M", "L"], ["Blue"])
+    ids += generate_variants(conn, pid, ["M"], ["Red"])
+    return ids
 
 
-# ---------- purchases ----------
-
-def _iso_date(value) -> str:
-    return value.isoformat() if isinstance(value, date) else str(value)
-
-
-def find_duplicate_purchase(conn, supplier_id, invoice_no, invoice_date):
-    """Earlier purchases with the same supplier invoice number in the same financial year.
-
-    This is a WARNING for the screen to show, not a block. Cancelled drafts are ignored.
-    """
-    fin_year = financial_year(_iso_date(invoice_date))
-    return conn.execute(
-        "SELECT * FROM purchases WHERE supplier_id = ? AND fin_year = ? "
-        "AND lower(trim(invoice_no)) = lower(trim(?)) AND status != 'cancelled' ORDER BY id",
-        (supplier_id, fin_year, invoice_no or ""),
-    ).fetchall()
+def _lines(variant_ids, qty=10, cost=50000, rate=5):
+    return [
+        {"variant_id": v, "qty": qty, "unit_cost_paise": cost, "tax_rate_percent": rate}
+        for v in variant_ids
+    ]
 
 
-def create_draft_purchase(
-    conn,
-    supplier_id,
-    invoice_no,
-    invoice_date,
-    lines,
-    *,
-    received_date=None,
-    discount_paise: int = 0,
-    freight_paise: int = 0,
-    paid_paise: int = 0,
-    notes=None,
-    created_by=None,
-):
-    """Save a purchase as a DRAFT. Stock does not change. Returns the purchase id."""
-    invoice_no = (invoice_no or "").strip()
-    if not invoice_no:
-        raise ValueError("Supplier invoice number is required.")
-    invoice_date = _iso_date(invoice_date)
-    fin_year = financial_year(invoice_date)  # also validates the date format
-    calc = calculate_purchase(lines, discount_paise=discount_paise, freight_paise=freight_paise)
-    if not 0 <= paid_paise <= calc["total_paise"]:
-        raise ValueError("Amount paid must be between zero and the invoice total.")
-
-    with transaction(conn):
-        if conn.execute("SELECT 1 FROM suppliers WHERE id = ?", (supplier_id,)).fetchone() is None:
-            raise ValueError("Supplier not found.")
-        for line in calc["lines"]:
-            if conn.execute("SELECT 1 FROM variants WHERE id = ?", (line["variant_id"],)).fetchone() is None:
-                raise ValueError("A product variant on this invoice was not found.")
-
-        cur = conn.execute(
-            "INSERT INTO purchases(supplier_id, invoice_no, invoice_date, received_date, fin_year, status, "
-            "subtotal_paise, discount_paise, tax_paise, freight_paise, round_off_paise, total_paise, "
-            "paid_paise, due_paise, notes, created_by) "
-            "VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?)",
-            (
-                supplier_id, invoice_no, invoice_date, received_date, fin_year,
-                calc["subtotal_paise"], calc["discount_paise"], calc["tax_paise"],
-                calc["freight_paise"], calc["round_off_paise"], calc["total_paise"],
-                paid_paise, calc["total_paise"] - paid_paise, notes, created_by,
-            ),
-        )
-        purchase_id = cur.lastrowid
-        for line in calc["lines"]:
-            conn.execute(
-                "INSERT INTO purchase_lines(purchase_id, variant_id, qty, unit_cost_paise, "
-                "tax_rate_percent, tax_paise, line_total_paise) VALUES (?,?,?,?,?,?,?)",
-                (
-                    purchase_id, line["variant_id"], line["qty"], line["unit_cost_paise"],
-                    line["tax_rate_percent"], line["tax_paise"], line["line_total_paise"],
-                ),
-            )
-        return purchase_id
+def _draft(conn, supplier, variants, invoice_no="INV-1", invoice_date="2026-11-01", **kw):
+    return create_draft_purchase(conn, supplier, invoice_no, invoice_date, _lines(variants), **kw)
 
 
-def confirm_purchase(conn, purchase_id, *, user_id=None, payment_mode="cash", received_date=None):
-    """Confirm a draft: add stock, allocate the voucher number, record payment. Returns the voucher number.
-
-    Everything happens in ONE transaction. If anything fails, nothing is saved.
-    Confirming a purchase that is not a draft is refused, so double-clicks cannot add stock twice.
-    """
-    with transaction(conn):
-        purchase = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
-        if purchase is None:
-            raise ValueError("Purchase not found.")
-        if purchase["status"] != "draft":
-            raise PurchaseStateError(
-                f"This purchase is already {purchase['status']} and cannot be confirmed again."
-            )
-        lines = conn.execute(
-            "SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY id", (purchase_id,)
-        ).fetchall()
-        if not lines:
-            raise ValueError("This purchase has no lines.")
-
-        _, voucher_no = next_number(conn, "PUR", purchase["fin_year"], "PUR")
-
-        for line in lines:
-            add_movement(
-                conn,
-                line["variant_id"],
-                line["qty"],
-                "purchase received",
-                doc_type="purchase",
-                doc_id=purchase_id,
-                user_id=user_id,
-            )
-
-        if purchase["paid_paise"] > 0:
-            conn.execute(
-                "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
-                "VALUES ('purchase', ?, ?, ?, ?, ?)",
-                (purchase_id, payment_mode, purchase["paid_paise"], purchase["invoice_no"], user_id),
-            )
-
-        conn.execute(
-            "UPDATE purchases SET status = 'confirmed', voucher_no = ?, "
-            "received_date = COALESCE(?, received_date, ?), confirmed_at = datetime('now','localtime') "
-            "WHERE id = ?",
-            (voucher_no, received_date, date.today().isoformat(), purchase_id),
-        )
-        return voucher_no
+def _count(conn, table):
+    return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
-def cancel_draft_purchase(conn, purchase_id):
-    """Cancel a DRAFT purchase. Confirmed purchases need a purchase return instead."""
-    with transaction(conn):
-        purchase = conn.execute("SELECT status FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
-        if purchase is None:
-            raise ValueError("Purchase not found.")
-        if purchase["status"] != "draft":
-            raise PurchaseStateError(
-                f"Only a draft can be cancelled; this purchase is {purchase['status']}."
-            )
-        conn.execute("UPDATE purchases SET status = 'cancelled' WHERE id = ?", (purchase_id,))
+# ---------- calculation ----------
+
+def test_calculation_totals_and_per_line_tax():
+    calc = calculate_purchase(_lines([1, 2], qty=10, cost=50000, rate=5))
+    assert calc["subtotal_paise"] == 1_000_000
+    assert calc["tax_paise"] == 50_000
+    assert calc["lines"][0]["tax_paise"] == 25_000
+    assert calc["lines"][0]["line_total_paise"] == 525_000
+    assert calc["total_paise"] == 1_050_000
+    assert calc["round_off_paise"] == 0
 
 
-def get_purchase(conn, purchase_id):
-    """Returns (purchase_row, [line_rows])."""
-    purchase = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
-    if purchase is None:
-        raise ValueError("Purchase not found.")
-    lines = conn.execute(
-        "SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY id", (purchase_id,)
-    ).fetchall()
-    return purchase, lines
+def test_tax_rounds_half_up_per_line_and_total_rounds_to_rupee():
+    # 3 x 33333 paise at 5% = 4999.95 paise, rounded half-up to 5000 per line
+    calc = calculate_purchase(_lines([1], qty=3, cost=33333, rate=5))
+    assert calc["lines"][0]["tax_paise"] == 5000  # 4999.95 rounds to 5000
+    assert calc["total_paise"] == 105_000  # 99999 + 5000 = 104999 -> 105000
+    assert calc["round_off_paise"] == 1
+
+
+def test_round_off_half_goes_up():
+    calc = calculate_purchase(_lines([1], qty=1, cost=105050, rate=0))
+    assert calc["total_paise"] == 105_100
+    assert calc["round_off_paise"] == 50
+
+
+def test_discount_and_freight_change_the_total():
+    calc = calculate_purchase(
+        _lines([1], qty=10, cost=50000, rate=0), discount_paise=20_000, freight_paise=5_000
+    )
+    assert calc["total_paise"] == 500_000 - 20_000 + 5_000
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"lines": []},
+        {"lines": _lines([1], qty=0)},
+        {"lines": _lines([1], qty=-2)},
+        {"lines": _lines([1], qty=1.5)},
+        {"lines": _lines([1], cost=-1)},
+        {"lines": _lines([1], rate=-5)},
+        {"lines": _lines([1]), "discount_paise": -1},
+        {"lines": _lines([1]), "freight_paise": -1},
+        {"lines": _lines([1], qty=1, cost=1000), "discount_paise": 999_999},
+    ],
+)
+def test_invalid_calculation_inputs_are_rejected(bad):
+    lines = bad.pop("lines")
+    with pytest.raises(ValueError):
+        calculate_purchase(lines, **bad)
+
+
+# ---------- supplier ----------
+
+def test_supplier_name_is_required(conn):
+    with pytest.raises(ValueError):
+        create_supplier(conn, "   ")
+
+
+# ---------- draft ----------
+
+def test_draft_purchase_does_not_change_stock(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants)
+    purchase, lines = get_purchase(conn, pid)
+    assert purchase["status"] == "draft"
+    assert purchase["voucher_no"] is None
+    assert len(lines) == 3
+    assert all(get_stock(conn, v) == 0 for v in variants)
+    assert _count(conn, "stock_movements") == 0
+
+
+def test_draft_stores_calculated_totals(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants, paid_paise=100_000)
+    purchase, _ = get_purchase(conn, pid)
+    assert purchase["subtotal_paise"] == 1_500_000
+    assert purchase["tax_paise"] == 75_000
+    assert purchase["total_paise"] == 1_575_000
+    assert purchase["paid_paise"] == 100_000
+    assert purchase["due_paise"] == 1_475_000
+
+
+def test_draft_needs_invoice_number(conn, supplier, variants):
+    with pytest.raises(ValueError):
+        _draft(conn, supplier, variants, invoice_no="  ")
+
+
+def test_draft_rejects_bad_date(conn, supplier, variants):
+    with pytest.raises(ValueError):
+        _draft(conn, supplier, variants, invoice_date="01/11/2026")
+
+
+def test_amount_paid_cannot_exceed_total(conn, supplier, variants):
+    with pytest.raises(ValueError):
+        _draft(conn, supplier, variants, paid_paise=99_999_999)
+    with pytest.raises(ValueError):
+        _draft(conn, supplier, variants, paid_paise=-1)
+
+
+def test_unknown_supplier_or_variant_saves_nothing(conn, supplier, variants):
+    with pytest.raises(ValueError):
+        _draft(conn, 9999, variants)
+    with pytest.raises(ValueError):
+        create_draft_purchase(conn, supplier, "X", "2026-11-01", _lines([variants[0], 9999]))
+    assert _count(conn, "purchases") == 0
+    assert _count(conn, "purchase_lines") == 0
+
+
+# ---------- confirm ----------
+
+def test_confirm_adds_stock_to_each_exact_variant(conn, supplier, variants):
+    lines = [
+        {"variant_id": variants[0], "qty": 5, "unit_cost_paise": 40000, "tax_rate_percent": 5},
+        {"variant_id": variants[1], "qty": 8, "unit_cost_paise": 40000, "tax_rate_percent": 5},
+        {"variant_id": variants[2], "qty": 3, "unit_cost_paise": 45000, "tax_rate_percent": 5},
+    ]
+    pid = create_draft_purchase(conn, supplier, "INV-9", "2026-11-01", lines)
+    confirm_purchase(conn, pid)
+    assert [get_stock(conn, v) for v in variants] == [5, 8, 3]
+
+
+def test_confirm_sets_status_voucher_and_links_movements(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants)
+    voucher = confirm_purchase(conn, pid, user_id=None)
+    purchase, _ = get_purchase(conn, pid)
+    assert purchase["status"] == "confirmed"
+    assert purchase["voucher_no"] == voucher == f"PUR/{financial_year('2026-11-01')}/000001"
+    assert purchase["confirmed_at"] is not None
+    moves = conn.execute("SELECT doc_type, doc_id, reason FROM stock_movements").fetchall()
+    assert len(moves) == 3
+    assert all(m["doc_type"] == "purchase" and m["doc_id"] == pid for m in moves)
+
+
+def test_confirming_twice_is_refused_and_stock_added_once(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants)
+    confirm_purchase(conn, pid)
+    with pytest.raises(PurchaseStateError):
+        confirm_purchase(conn, pid)
+    assert [get_stock(conn, v) for v in variants] == [10, 10, 10]
+    assert _count(conn, "stock_movements") == 3
+
+
+def test_voucher_numbers_are_sequential(conn, supplier, variants):
+    first = confirm_purchase(conn, _draft(conn, supplier, variants, invoice_no="A"))
+    second = confirm_purchase(conn, _draft(conn, supplier, variants, invoice_no="B"))
+    assert first.endswith("000001")
+    assert second.endswith("000002")
+
+
+def test_confirm_unknown_purchase_is_rejected(conn):
+    with pytest.raises(ValueError):
+        confirm_purchase(conn, 12345)
+
+
+def test_payment_is_recorded_on_confirm(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants, paid_paise=200_000)
+    confirm_purchase(conn, pid, payment_mode="upi")
+    pay = conn.execute("SELECT * FROM payments").fetchall()
+    assert len(pay) == 1
+    assert pay[0]["document_type"] == "purchase"
+    assert pay[0]["document_id"] == pid
+    assert pay[0]["mode"] == "upi"
+    assert pay[0]["amount_paise"] == 200_000
+
+
+def test_no_payment_row_when_nothing_paid(conn, supplier, variants):
+    confirm_purchase(conn, _draft(conn, supplier, variants))
+    assert _count(conn, "payments") == 0
+
+
+def test_failure_during_confirm_rolls_everything_back(conn, supplier, variants, monkeypatch):
+    pid = _draft(conn, supplier, variants, paid_paise=100_000)
+    real = purchases_module.add_movement
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("power cut")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(purchases_module, "add_movement", flaky)
+    with pytest.raises(RuntimeError):
+        confirm_purchase(conn, pid)
+
+    purchase, _ = get_purchase(conn, pid)
+    assert purchase["status"] == "draft"
+    assert purchase["voucher_no"] is None
+    assert [get_stock(conn, v) for v in variants] == [0, 0, 0]
+    assert _count(conn, "payments") == 0
+    assert _count(conn, "number_series") == 0  # voucher number was released too
+
+    # after the failure, a retry works and uses voucher number 1
+    monkeypatch.setattr(purchases_module, "add_movement", real)
+    assert confirm_purchase(conn, pid).endswith("000001")
+
+
+# ---------- cancel ----------
+
+def test_cancelled_draft_cannot_be_confirmed(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants)
+    cancel_draft_purchase(conn, pid)
+    assert get_purchase(conn, pid)[0]["status"] == "cancelled"
+    with pytest.raises(PurchaseStateError):
+        confirm_purchase(conn, pid)
+    assert [get_stock(conn, v) for v in variants] == [0, 0, 0]
+
+
+def test_confirmed_purchase_cannot_be_cancelled(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants)
+    confirm_purchase(conn, pid)
+    with pytest.raises(PurchaseStateError):
+        cancel_draft_purchase(conn, pid)
+    assert [get_stock(conn, v) for v in variants] == [10, 10, 10]
+
+
+# ---------- duplicate supplier invoice warning ----------
+
+def test_duplicate_invoice_is_found_ignoring_case_and_spaces(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants, invoice_no="AB-100")
+    found = find_duplicate_purchase(conn, supplier, "  ab-100 ", "2026-11-05")
+    assert [r["id"] for r in found] == [pid]
+
+
+def test_same_invoice_from_another_supplier_is_not_a_duplicate(conn, supplier, variants):
+    _draft(conn, supplier, variants, invoice_no="AB-100")
+    other = create_supplier(conn, "Mehta Garments")
+    assert find_duplicate_purchase(conn, other, "AB-100", "2026-11-01") == []
+
+
+def test_same_invoice_in_next_financial_year_is_not_a_duplicate(conn, supplier, variants):
+    _draft(conn, supplier, variants, invoice_no="AB-100", invoice_date="2026-11-01")
+    assert find_duplicate_purchase(conn, supplier, "AB-100", "2027-04-01") == []
+
+
+def test_cancelled_purchase_is_ignored_by_duplicate_check(conn, supplier, variants):
+    pid = _draft(conn, supplier, variants, invoice_no="AB-100")
+    cancel_draft_purchase(conn, pid)
+    assert find_duplicate_purchase(conn, supplier, "AB-100", "2026-11-01") == []
+
+
+def test_duplicate_is_only_a_warning_not_a_block(conn, supplier, variants):
+    _draft(conn, supplier, variants, invoice_no="AB-100")
+    second = _draft(conn, supplier, variants, invoice_no="AB-100")
+    assert second is not None
