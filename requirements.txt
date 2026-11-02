@@ -3,3 +3,4 @@ sqlcipher3-wheels
 argon2-cffi
 reportlab
 pytest
+cryptography
