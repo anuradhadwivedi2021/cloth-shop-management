@@ -9,6 +9,7 @@ from db.migration_4 import MIGRATION_4
 from db.migration_5 import MIGRATION_5
 from db.migration_6 import MIGRATION_6
 from db.migration_7 import MIGRATION_7
+from db.migration_8 import MIGRATION_8
 
 MIGRATION_1 = """
 CREATE TABLE settings (
@@ -397,6 +398,7 @@ MIGRATIONS = {
     5: MIGRATION_5,
     6: MIGRATION_6,
     7: MIGRATION_7,
+    8: MIGRATION_8,
 }
 
 
