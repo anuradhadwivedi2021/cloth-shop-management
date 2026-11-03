@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from core.money import parse_rupees
+
 class ExpensesView(QWidget):
     """Dedicated Daily Shop Expenses Management View."""
     
@@ -73,12 +75,12 @@ class ExpensesView(QWidget):
             self.table_expenses.setItem(idx, 3, QTableWidgetItem(notes or ""))
 
     def save_expense(self):
-        amt_str = self.txt_amount.text().strip()
-        if not amt_str:
-            QMessageBox.warning(self, "Error", "Please enter valid amount!")
+        try:
+            amt_paise = parse_rupees(self.txt_amount.text(), allow_zero=False)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Error", str(exc))
             return
         try:
-            amt_paise = int(float(amt_str) * 100)
             cursor = self.conn.cursor()
             cursor.execute("INSERT INTO expenses (category, amount_paise, notes, user_id) VALUES (?, ?, ?, ?)",
                            (self.cmb_category.currentText(), amt_paise, self.txt_notes.text().strip(), self.user_id))
@@ -87,5 +89,5 @@ class ExpensesView(QWidget):
             self.txt_amount.clear()
             self.txt_notes.clear()
             self.load_expenses()
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Invalid numeric amount!")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Error", str(exc))
