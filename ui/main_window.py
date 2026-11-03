@@ -12,6 +12,7 @@ from core.session import SessionLocked
 from ui.widgets import label
 
 # Import Real Functional Views
+from ui.backup_view import BackupRestoreView
 from ui.billing_counter_view import FastBillingCounterView
 from ui.purchases_view import PurchasesManagementView
 from ui.returns_customer_view import ReturnsAndCustomerLedgerView
@@ -64,10 +65,12 @@ class PlaceholderPage(QWidget):
 class MainWindow(QWidget):
     lock_requested = Signal()
     sign_out_requested = Signal()
+    restored = Signal()  # a backup was restored; the database is closed, go back to sign-in
 
-    def __init__(self, conn, session, profile: dict, parent=None):
+    def __init__(self, conn, session, profile: dict, parent=None, folder=None):
         super().__init__(parent)
         self.conn, self.session = conn, session
+        self.folder = folder
         self.profile = profile
         self.setObjectName("page")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -117,7 +120,12 @@ class MainWindow(QWidget):
         """Returns the real functional view widget for each menu option."""
         user_id = self.session.user_id
 
-        if text in ["Dashboard", "Reports", "Backup and Restore"]:
+        if text == "Backup and Restore":
+            view = BackupRestoreView(self.conn, self.session, self.folder)
+            view.restored.connect(self.restored)
+            return view
+
+        if text in ["Dashboard", "Reports"]:
             return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
 
         elif text == "New Sale / Billing":

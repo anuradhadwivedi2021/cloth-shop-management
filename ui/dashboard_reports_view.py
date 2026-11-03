@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 class DashboardAndReportsView(QWidget):
-    """Main Dashboard, Reports (GST, Gross Margin), Backup/Restore & User Controls View."""
+    """Dashboard and reports. Backup and Restore now has its own screen (ui/backup_view.py)."""
     
     def __init__(self, parent=None, db_connection=None, db_path="cloth_shop.db", user_id=1):
         super().__init__(parent)
@@ -57,27 +57,7 @@ class DashboardAndReportsView(QWidget):
         rg_layout.addWidget(self.table_report)
         
         reports_group.setLayout(rg_layout)
-        bottom_layout.addWidget(reports_group, stretch=7)
-        
-        # System Backup & Settings Group
-        sys_group = QGroupBox("Backup & Maintenance")
-        sg_layout = QVBoxLayout()
-        
-        btn_backup = QPushButton("Create Encrypted Backup")
-        btn_backup.setStyleSheet("background-color: #1565c0; color: white; font-weight: bold; padding: 10px;")
-        btn_backup.clicked.connect(self.take_backup)
-        
-        btn_restore = QPushButton("Restore Backup")
-        btn_restore.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold; padding: 10px;")
-        btn_restore.clicked.connect(self.restore_backup)
-        
-        sg_layout.addWidget(QLabel("<b>Data Safety & Storage</b>"))
-        sg_layout.addWidget(btn_backup)
-        sg_layout.addWidget(btn_restore)
-        sg_layout.addStretch()
-        
-        sys_group.setLayout(sg_layout)
-        bottom_layout.addWidget(sys_group, stretch=3)
+        bottom_layout.addWidget(reports_group)
         
         main_layout.addLayout(bottom_layout)
 
@@ -123,14 +103,3 @@ class DashboardAndReportsView(QWidget):
 
     def run_margin_report(self):
         QMessageBox.information(self, "Gross Margin Report", "Gross Margin calculated based on COGS vs Net Sales.")
-
-    def take_backup(self):
-        from core.dashboard_backup_engine import create_encrypted_backup
-        try:
-            path = create_encrypted_backup(self.db_path, "backups")
-            QMessageBox.information(self, "Backup Success", f"Encrypted Backup created successfully at:\n{path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Backup Error", str(e))
-
-    def restore_backup(self):
-        QMessageBox.warning(self, "Restore Backup", "Restoring a backup will verify file hash and create a safety backup before applying.")

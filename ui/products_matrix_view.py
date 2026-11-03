@@ -5,6 +5,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from core.matrix_entry import SELLABLE_UNITS, preview_matrix, save_matrix_product
+from core.permissions import PermissionDenied
+from core.product_edit import DuplicateProductError
+
 class MatrixProductDialog(QDialog):
     """Product Matrix Entry Dialog for bulk creating size x colour combinations."""
     
@@ -36,7 +40,7 @@ class MatrixProductDialog(QDialog):
         
         row2 = QHBoxLayout()
         self.cmb_unit = QComboBox()
-        self.cmb_unit.addItems(["piece", "pair", "set", "metre"])
+        self.cmb_unit.addItems(list(SELLABLE_UNITS))
         self.txt_price = QLineEdit()
         self.txt_price.setPlaceholderText("Selling Price (₹)")
         self.txt_cost = QLineEdit()
@@ -76,9 +80,10 @@ class MatrixProductDialog(QDialog):
         matrix_layout.addLayout(m_row)
         
         # Grid Preview Table
-        self.table_preview = QTableWidget(0, 4)
-        self.table_preview.setHorizontalHeaderLabels(["Size", "Colour", "Generated SKU", "Auto Barcode"])
+        self.table_preview = QTableWidget(0, 2)
+        self.table_preview.setHorizontalHeaderLabels(["Size", "Colour"])
         matrix_layout.addWidget(self.table_preview)
+        matrix_layout.addWidget(QLabel("SKU and barcode are generated automatically when you save."))
         
         matrix_group.setLayout(matrix_layout)
         layout.addWidget(matrix_group)
@@ -93,40 +98,50 @@ class MatrixProductDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         
         actions.addStretch()
-        actions.addLayout(actions)
         actions.addWidget(btn_cancel)
         actions.addWidget(btn_save)
         
         layout.addLayout(actions)
 
     def generate_grid_preview(self):
-        sizes = [s.strip() for s in self.txt_sizes.text().split(",") if s.strip()]
-        colours = [c.strip() for c in self.txt_colours.text().split(",") if c.strip()]
-        
-        if not sizes or not colours:
-            QMessageBox.warning(self, "Warning", "Please enter at least one size and one colour.")
+        try:
+            combos = preview_matrix(self.txt_sizes.text(), self.txt_colours.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Cloth Shop", str(exc))
             return
-            
-        p_name = self.txt_name.text().strip() or "ITEM"
-        p_code = p_name[:4].upper()
-        
         self.table_preview.setRowCount(0)
-        idx = 1
-        for colour in colours:
-            for size in sizes:
-                row_idx = self.table_preview.rowCount()
-                self.table_preview.insertRow(row_idx)
-                
-                sku = f"{p_code}-{size.upper()}-{colour.upper()}"
-                barcode = f"20000001{idx:04d}"
-                
-                self.table_preview.setItem(row_idx, 0, QTableWidgetItem(size))
-                self.table_preview.setItem(row_idx, 1, QTableWidgetItem(colour))
-                self.table_preview.setItem(row_idx, 2, QTableWidgetItem(sku))
-                self.table_preview.setItem(row_idx, 3, QTableWidgetItem(barcode))
-                idx += 1
+        for size, colour in combos:
+            row = self.table_preview.rowCount()
+            self.table_preview.insertRow(row)
+            self.table_preview.setItem(row, 0, QTableWidgetItem(size))
+            self.table_preview.setItem(row, 1, QTableWidgetItem(colour))
+
+    def _save(self, allow_duplicate):
+        return save_matrix_product(
+            self.conn, self.user_id,
+            name=self.txt_name.text(), category=self.txt_category.text(),
+            unit=self.cmb_unit.currentText(), price_text=self.txt_price.text(),
+            cost_text=self.txt_cost.text(), sizes_text=self.txt_sizes.text(),
+            colours_text=self.txt_colours.text(), allow_duplicate=allow_duplicate,
+        )
 
     def save_matrix_product(self):
-        # Trigger core backend matrix creation
-        QMessageBox.information(self, "Success", "Product and Matrix variants saved successfully!")
+        try:
+            try:
+                result = self._save(False)
+            except DuplicateProductError:
+                ask = QMessageBox.question(
+                    self, "Cloth Shop",
+                    "A product with this name already exists. Please review it first.\n\nAdd this as a new product anyway?",
+                )
+                if ask != QMessageBox.StandardButton.Yes:
+                    return
+                result = self._save(True)
+        except (ValueError, PermissionDenied) as exc:
+            QMessageBox.warning(self, "Cloth Shop", str(exc))
+            return
+        except Exception:
+            QMessageBox.critical(self, "Cloth Shop", "The product could not be saved (error E-PRODUCT). Nothing was changed.")
+            return
+        QMessageBox.information(self, "Cloth Shop", f"Product saved with {len(result['variant_ids'])} variants.")
         self.accept()

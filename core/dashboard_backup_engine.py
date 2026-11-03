@@ -1,7 +1,5 @@
 # core/dashboard_backup_engine.py
 import sqlite3
-import os
-import shutil
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -72,14 +70,3 @@ def get_gstr1_summary_report(conn: sqlite3.Connection, start_date: str, end_date
         })
     return report
 
-def create_encrypted_backup(db_filepath: str, backup_dir: str) -> str:
-    """Creates a timestamped local safety backup file."""
-    if not os.path.exists(backup_dir):
-        os.makedirs(backup_dir)
-        
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_filename = f"cloth_shop_backup_{timestamp}.bak"
-    backup_path = os.path.join(backup_dir, backup_filename)
-    
-    shutil.copy2(db_filepath, backup_path)
-    return backup_path

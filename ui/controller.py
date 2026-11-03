@@ -56,8 +56,9 @@ class AppController(QStackedWidget):
     def _signed_in(self, conn, session) -> None:
         self._drop_main()
         self.conn, self.session = conn, session
-        self.main = MainWindow(conn, session, get_shop_profile(conn))
+        self.main = MainWindow(conn, session, get_shop_profile(conn), folder=self.folder)
         self.main.lock_requested.connect(self.lock)
+        self.main.restored.connect(self.after_restore)
         self.main.sign_out_requested.connect(self.sign_out)
         self.addWidget(self.main)
         self.setCurrentWidget(self.main)
@@ -80,8 +81,15 @@ class AppController(QStackedWidget):
     def _unlocked(self) -> None:
         self.setCurrentWidget(self.main)
 
+    def after_restore(self) -> None:
+        """A backup was restored. core.backup already closed the old connection; sign in again."""
+        self.sign_out()
+
     def sign_out(self) -> None:
-        name = (get_shop_profile(self.conn)["name"] or "") if self.conn else ""
+        try:
+            name = (get_shop_profile(self.conn)["name"] or "") if self.conn else ""
+        except Exception:  # the connection may already be closed (after a restore)
+            name = ""
         self._drop_main()
         self.close_database()
         self.login_page.reset(name)
