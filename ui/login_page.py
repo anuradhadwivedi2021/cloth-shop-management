@@ -1,3 +1,4 @@
+# ui/login_page.py
 """Sign-in, lock screen, and 'forgot password' (recovery key) screens."""
 
 import logging
@@ -115,7 +116,7 @@ class LoginPage(QWidget):
 
 
 class RecoverDialog(QDialog):
-    """Forgotten owner password: recovery key + new password. Shows the NEW recovery key afterwards."""
+    """Forgotten owner password: recovery key + new password."""
 
     def __init__(self, folder, parent=None):
         super().__init__(parent)
@@ -160,7 +161,7 @@ class RecoverDialog(QDialog):
         self.saved.toggled.connect(self.go.setEnabled)
 
     def _go(self) -> None:
-        if self.result_pair is not None:  # second click = "Continue"
+        if self.result_pair is not None:
             self.accept()
             return
         try:
@@ -183,13 +184,13 @@ class RecoverDialog(QDialog):
         self.go.setEnabled(False)
 
     def reject(self) -> None:
-        if self.result_pair is not None:  # key not yet saved: do not let the owner skip it by accident
+        if self.result_pair is not None:
             return
         super().reject()
 
 
 class LockPage(QWidget):
-    """Shown after idle time or when the user presses Lock. Needs the same user's password."""
+    """Shown after idle time or when the user presses Lock."""
 
     unlocked = Signal()
     sign_out = Signal()

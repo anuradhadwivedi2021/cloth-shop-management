@@ -11,6 +11,10 @@ from db.migration_6 import MIGRATION_6
 from db.migration_7 import MIGRATION_7
 from db.migration_8 import MIGRATION_8
 from db.migration_9 import MIGRATION_9
+from db.migration_11 import MIGRATION_11
+from db.migration_12 import MIGRATION_12
+
+
 
 MIGRATION_1 = """
 CREATE TABLE settings (
@@ -401,7 +405,10 @@ MIGRATIONS = {
     7: MIGRATION_7,
     8: MIGRATION_8,
     9: MIGRATION_9,
+    11:MIGRATION_11,
+    12:MIGRATION_12,
 }
+
 
 
 def migrate(conn):

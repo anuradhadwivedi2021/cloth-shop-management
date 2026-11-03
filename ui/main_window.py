@@ -1,6 +1,4 @@
 """The main screen after sign-in: top bar, menu (only what this user may open) and the work area.
-
-Each menu entry opens a page. Real pages are added step by step; until then a page says it is coming.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -12,6 +10,21 @@ from PySide6.QtWidgets import (
 from core.permissions import has_permission
 from core.session import SessionLocked
 from ui.widgets import label
+
+# Import Real Functional Views
+from ui.billing_counter_view import FastBillingCounterView
+from ui.purchases_view import PurchasesManagementView
+from ui.returns_customer_view import ReturnsAndCustomerLedgerView
+from ui.cash_audit_view import CashClosingAndAuditView
+from ui.dashboard_reports_view import DashboardAndReportsView
+from ui.products_matrix_view import MatrixProductDialog
+from ui.users_permissions_view import UsersAndPermissionsView
+from ui.settings_view import SettingsView
+from ui.expenses_view import ExpensesView
+from ui.stock_count_view import StockCountView
+from ui.suppliers_view import SuppliersManagementView
+from ui.customers_view import CustomersView
+from ui.purchase_returns_view import PurchaseReturnsView
 
 # (menu text, permissions that open it: any one is enough; None = everyone). Order follows SRS 4.2.
 MENU = [
@@ -55,6 +68,7 @@ class MainWindow(QWidget):
     def __init__(self, conn, session, profile: dict, parent=None):
         super().__init__(parent)
         self.conn, self.session = conn, session
+        self.profile = profile
         self.setObjectName("page")
         self.setAttribute(Qt.WA_StyledBackground, True)
 
@@ -100,18 +114,62 @@ class MainWindow(QWidget):
         QShortcut(QKeySequence("Ctrl+L"), self, activated=self.lock_requested.emit)
 
     def _page_for(self, text: str, profile: dict) -> QWidget:
-        if text == "Dashboard":
-            page = PlaceholderPage(
-                f"Welcome to {profile.get('shop_name') or 'your shop'}",
-                "Your shop is ready. Today's sales, low stock and cash will appear here in a later step.")
-            return page
-        return PlaceholderPage(text, "This screen will be built in an upcoming step.")
+        """Returns the real functional view widget for each menu option."""
+        user_id = self.session.user_id
+
+        if text in ["Dashboard", "Reports", "Backup and Restore"]:
+            return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "New Sale / Billing":
+            return FastBillingCounterView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Purchases":
+            return PurchasesManagementView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Suppliers":
+            return SuppliersManagementView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Customers":
+            return CustomersView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Sales Returns and Exchanges":
+            return ReturnsAndCustomerLedgerView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Purchase Returns":
+            return PurchaseReturnsView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Payments and Cash":
+            return CashClosingAndAuditView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Expenses":
+            return ExpensesView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Stock Count and Adjustments":
+            return StockCountView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Users and Permissions":
+            return UsersAndPermissionsView(db_connection=self.conn, user_id=user_id)
+
+        elif text == "Settings":
+            return SettingsView(db_connection=self.conn, user_id=user_id)
+
+        elif text in ["Products", "Stock and Variants"]:
+            return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
+
+        return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
 
     def _open(self, row: int) -> None:
         if row >= 0:
             try:
                 self.session.touch()
             except SessionLocked:
-                self.lock_requested.emit()  # idle time ran out between the click and now
+                self.lock_requested.emit()
                 return
+            
+            selected_text = self.allowed[row]
+            
+            if selected_text == "Products":
+                dlg = MatrixProductDialog(self, db_connection=self.conn, user_id=self.session.user_id)
+                dlg.exec()
+            
             self.pages.setCurrentIndex(row)
