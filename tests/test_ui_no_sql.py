@@ -13,8 +13,8 @@ FORBIDDEN = re.compile(r"\.execute\(|\.executemany\(|\.executescript\(|\.cursor\
 
 # Screens that still need to be re-wired onto core/ (remove each name once it is clean).
 LEGACY = {
-    "billing_counter_view.py",
-    "customers_view.py",
+    
+    
     "expenses_view.py",
     "purchases_view.py",
     "settings_view.py",

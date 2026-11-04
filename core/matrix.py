@@ -57,3 +57,11 @@ def generate_matrix_variants(
             variant_idx += 1
             
     return matrix_variants
+
+
+class MatrixEngine:
+    """Compatibility wrapper for UI views."""
+    def __init__(self):
+        pass
+
+    

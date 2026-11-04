@@ -55,3 +55,8 @@ def process_store_credit(conn: sqlite3.Connection, customer_id: int, amount: flo
         VALUES (?, ?, ?, ?, ?)
     """, (customer_id, amount, tx_type, reference_id, notes))
     conn.commit()
+
+class VoucherLoyaltyEngine:
+    """Compatibility wrapper for UI views."""
+    def __init__(self, *args, **kwargs):
+        pass

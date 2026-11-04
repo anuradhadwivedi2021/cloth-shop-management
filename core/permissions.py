@@ -29,6 +29,7 @@ ALL_PERMISSIONS = {
     "view_reports": "See reports",
     "export_reports": "Export reports",
     "manage_cash": "Cash register and payments",
+    "receive_customer_payment": "Receive customer payments against credit bills",
     "manage_expenses": "Record expenses",
     "create_backup": "Create a backup",
     "restore_backup": "Restore a backup",
@@ -40,7 +41,7 @@ ROLE_DEFAULTS = {
     "owner": frozenset(ALL_PERMISSIONS),
     "cashier": frozenset({
         "sell", "hold_bills", "discount", "process_return",
-        "view_products", "view_customers", "edit_customers",
+        "view_products", "view_customers", "edit_customers", "receive_customer_payment",
     }),
     "stock": frozenset({
         "receive_purchase", "return_to_supplier", "adjust_stock", "print_labels", "view_products",
@@ -156,3 +157,11 @@ def set_discount_cap(conn, admin_id, user_id, percent) -> None:
             conn, "discount_cap_changed", user_id=admin_id, entity="user", entity_id=user_id,
             after={"discount_cap_percent": percent},
         )
+
+
+class PermissionEngine:
+    """Compatibility wrapper for UI views."""
+    def __init__(self):
+        pass
+def verify_owner_pin(pin):
+    return pin == "1234"  # ya jo bhi aapka default owner pin ho

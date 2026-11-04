@@ -5,12 +5,17 @@ rules hold even if a screen forgets to hide a button.
 
   sell          needs 'sell'. A discount needs 'discount' and must be within the
                 user's limit; above it the owner's PIN is required.
+                A bill that is not paid in full is a credit sale: it must stay within the customer's
+                credit limit (see core.customer_credit). Above the limit, or for a customer who is not
+                allowed credit, the owner's PIN (or the owner signed in) approves it and the override is
+                logged. A refused bill is rolled back completely.
   return_items  needs 'process_return'. If the return policy blocks the return,
                 the owner's PIN (or the owner signed in) can override it with a reason.
 """
 
 from core.audit import log_event
 from core.auth import verify_owner_pin
+from core.customer_credit import CreditLimitExceeded, apply_credit_terms_to_sale
 from core.permissions import PermissionDenied, discount_cap_percent, has_permission, require_permission
 from core.returns import process_return
 from core.sales import save_sale_in_transaction
@@ -33,8 +38,12 @@ def _gross_and_discount(conn, cart, bill_discount_paise):
     return gross, discount + (bill_discount_paise or 0)
 
 
-def sell(conn, cart, payments, *, user_id, approver_pin=None, **kwargs) -> int:
-    """Save a bill with permission and discount-limit checks. Returns the sale id."""
+def sell(conn, cart, payments, *, user_id, approver_pin=None, due_date=None, **kwargs) -> int:
+    """Save a bill with permission, discount-limit and credit-limit checks. Returns the sale id.
+
+    due_date: pay-by date (YYYY-MM-DD) for a credit bill; default is the bill date plus the customer's
+    usual credit days.
+    """
     require_permission(conn, user_id, "sell", "make a sale")
     key = (kwargs.get("idempotency_key") or "").strip()
     if key:
@@ -56,14 +65,32 @@ def sell(conn, cart, payments, *, user_id, approver_pin=None, **kwargs) -> int:
                     )
                 approver_id = verify_owner_pin(conn, approver_pin)  # wrong PINs are recorded and throttled
 
-    with transaction(conn):
-        sale_id = save_sale_in_transaction(conn, cart, payments, user_id=user_id, **kwargs)
-        if approver_id is not None:
-            log_event(
-                conn, "discount_override", user_id=user_id, entity="sale", entity_id=sale_id,
-                after={"approved_by": approver_id, "discount_percent": round(percent, 2), "limit_percent": cap},
-            )
-        return sale_id
+    # Who may approve a credit bill above the limit: the owner signed in, or an owner PIN already
+    # checked for this bill. Otherwise a PIN is checked only if the limit is really hit (below).
+    credit_approver = approver_id
+    if credit_approver is None and conn.execute(
+        "SELECT 1 FROM users WHERE id = ? AND role = 'owner'", (user_id,)
+    ).fetchone():
+        credit_approver = user_id
+
+    while True:
+        try:
+            with transaction(conn):
+                sale_id = save_sale_in_transaction(conn, cart, payments, user_id=user_id, **kwargs)
+                if approver_id is not None:
+                    log_event(
+                        conn, "discount_override", user_id=user_id, entity="sale", entity_id=sale_id,
+                        after={"approved_by": approver_id, "discount_percent": round(percent, 2), "limit_percent": cap},
+                    )
+                apply_credit_terms_to_sale(
+                    conn, sale_id, user_id=user_id, override_user_id=credit_approver, due_date=due_date,
+                )
+                return sale_id
+        except CreditLimitExceeded:
+            # The whole bill was rolled back. With a PIN, check it (outside the failed transaction) and retry once.
+            if credit_approver is not None or not approver_pin:
+                raise
+            credit_approver = verify_owner_pin(conn, approver_pin)
 
 
 def return_items(conn, sale_id, items, *, user_id, approver_pin=None, override_reason=None, **kwargs) -> int:

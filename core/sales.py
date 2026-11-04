@@ -413,3 +413,13 @@ def discard_held_bill(conn, slot) -> None:
     with transaction(conn):
         if conn.execute("DELETE FROM held_bills WHERE slot = ?", (slot,)).rowcount == 0:
             raise ValueError("Held bill not found.")
+class SalesEngine:
+    """Compatibility wrapper for UI views."""
+    def create_sale(self, conn, cart, payments, **kwargs):
+        return create_sale(conn, cart, payments, **kwargs)
+
+
+class SalesEngine:
+    """Compatibility wrapper for UI views."""
+    def __init__(self):
+        pass

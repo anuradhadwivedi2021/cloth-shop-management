@@ -1,5 +1,17 @@
 """The main screen after sign-in: top bar, menu (only what this user may open) and the work area.
+
+How pages are built (important):
+  * Every menu entry gets a page. A page that fails to build shows a short error page instead of
+    stopping the whole app, so one broken screen can never lock the owner out of the others.
+  * Screens are imported only when they are built, so a problem inside one screen's file cannot
+    stop the main window from opening.
+  * Only screens that run on the tested core/ functions are connected. The others show a clear
+    "not connected yet" page. They are connected one by one, each with its own tests, because a
+    screen that does its own SQL skips permission checks, the audit log and the stock rules, and a
+    billing screen must never say "saved" unless the bill really was saved.
 """
+
+import logging
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -9,56 +21,60 @@ from PySide6.QtWidgets import (
 
 from core.permissions import has_permission
 from core.session import SessionLocked
+from ui import screens
+from ui.i18n import N_, load_language_from_settings, tr
 from ui.widgets import label
 
-# Import Real Functional Views
-from ui.backup_view import BackupRestoreView
-from ui.billing_counter_view import FastBillingCounterView
-from ui.purchases_view import PurchasesManagementView
-from ui.returns_customer_view import ReturnsAndCustomerLedgerView
-from ui.cash_audit_view import CashClosingAndAuditView
-from ui.dashboard_reports_view import DashboardAndReportsView
-from ui.products_matrix_view import MatrixProductDialog
-from ui.users_permissions_view import UsersAndPermissionsView
-from ui.settings_view import SettingsView
-from ui.expenses_view import ExpensesView
-from ui.stock_count_view import StockCountView
-from ui.suppliers_view import SuppliersManagementView
-from ui.customers_view import CustomersView
-from ui.purchase_returns_view import PurchaseReturnsView
+log = logging.getLogger(__name__)
 
 # (menu text, permissions that open it: any one is enough; None = everyone). Order follows SRS 4.2.
 MENU = [
-    ("Dashboard", None),
-    ("New Sale / Billing", ("sell",)),
-    ("Products", ("view_products",)),
-    ("Stock and Variants", ("view_products",)),
-    ("Purchases", ("receive_purchase",)),
-    ("Suppliers", ("receive_purchase", "view_reports")),
-    ("Customers", ("view_customers",)),
-    ("Sales Returns and Exchanges", ("process_return",)),
-    ("Purchase Returns", ("return_to_supplier",)),
-    ("Stock Count and Adjustments", ("adjust_stock",)),
-    ("Payments and Cash", ("manage_cash",)),
-    ("Expenses", ("manage_expenses",)),
-    ("Reports", ("view_reports",)),
-    ("Users and Permissions", ("manage_users",)),
-    ("Backup and Restore", ("create_backup", "restore_backup")),
-    ("Settings", ("manage_settings",)),
+    (N_("Dashboard"), None),
+    (N_("New Sale / Billing"), ("sell",)),
+    (N_("Products"), ("view_products",)),
+    (N_("Stock and Variants"), ("view_products",)),
+    (N_("Purchases"), ("receive_purchase",)),
+    (N_("Suppliers"), ("receive_purchase", "view_reports")),
+    (N_("Customers"), ("view_customers",)),
+    (N_("Sales Returns and Exchanges"), ("process_return",)),
+    (N_("Purchase Returns"), ("return_to_supplier",)),
+    (N_("Stock Count and Adjustments"), ("adjust_stock",)),
+    (N_("Payments and Cash"), ("manage_cash",)),
+    (N_("Expenses"), ("manage_expenses",)),
+    (N_("Reports"), ("view_reports",)),
+    (N_("Users and Permissions"), ("manage_users",)),
+    (N_("Backup and Restore"), ("create_backup", "restore_backup")),
+    (N_("Settings"), ("manage_settings",)),
 ]
 
-ROLE_NAMES = {"owner": "Owner", "cashier": "Cashier", "stock": "Stock staff", "accountant": "Accountant"}
+ROLE_NAMES = {"owner": N_("Owner"), "cashier": N_("Cashier"), "stock": N_("Stock staff"), "accountant": N_("Accountant")}
+
+# Screens not connected to the tested core/ functions yet: what the page tells the user.
+PENDING = {
+    "Products": N_("Product and size/colour matrix entry is being connected to the tested product functions."),
+    "Stock and Variants": N_("The stock-by-size-and-colour view is being connected to the stock reports."),
+    "Purchases": N_("Receiving stock (draft, then confirm) is being connected to the tested purchase functions."),
+    "Customers": N_("Customer profiles, privacy consent and credit dues are being connected."),
+    "Sales Returns and Exchanges": N_("Returns and exchanges are being connected to the tested return functions."),
+    "Purchase Returns": N_("Returns to suppliers are being connected to the tested functions."),
+    "Stock Count and Adjustments": N_("Physical stock count and adjustments are being connected to the tested functions."),
+    "Payments and Cash": N_("The cash register and day closing are being connected to the tested functions."),
+    "Expenses": N_("Expenses are being connected to the tested expense functions."),
+    "Reports": N_("The report screens are being connected to the tested reports."),
+    "Settings": N_("Settings are being connected to the checked settings functions."),
+}
 
 
 class PlaceholderPage(QWidget):
-    def __init__(self, title: str, note: str):
+    def __init__(self, title: str, note: str, name: str = "subtitle"):
         super().__init__()
+        self.is_error = name == "error"
         self.setObjectName("page")
         self.setAttribute(Qt.WA_StyledBackground, True)
         col = QVBoxLayout(self)
         col.setContentsMargins(32, 28, 32, 28)
         col.addWidget(label(title, "title"))
-        col.addWidget(label(note, "subtitle"))
+        col.addWidget(label(note, name))
         col.addStretch(1)
 
 
@@ -69,6 +85,7 @@ class MainWindow(QWidget):
 
     def __init__(self, conn, session, profile: dict, parent=None, folder=None):
         super().__init__(parent)
+        load_language_from_settings(conn)  # the shop's language (English if not set)
         self.conn, self.session = conn, session
         self.folder = folder
         self.profile = profile
@@ -79,12 +96,12 @@ class MainWindow(QWidget):
         top.setObjectName("topbar")
         bar = QHBoxLayout(top)
         bar.setContentsMargins(18, 10, 18, 10)
-        bar.addWidget(label(profile.get("name") or "Cloth Shop", None, wrap=False))
+        bar.addWidget(label(profile.get("name") or tr("Cloth Shop"), None, wrap=False))
         bar.addStretch(1)
         who = session.username
-        bar.addWidget(label(f"{who}  ({ROLE_NAMES.get(session.role, session.role)})", None, wrap=False))
-        self.lock_btn = QPushButton("Lock  (Ctrl+L)")
-        self.out_btn = QPushButton("Sign out")
+        bar.addWidget(label(f"{who}  ({tr(ROLE_NAMES.get(session.role, session.role))})", None, wrap=False))
+        self.lock_btn = QPushButton(tr("Lock  (Ctrl+L)"))
+        self.out_btn = QPushButton(tr("Sign out"))
         self.lock_btn.clicked.connect(self.lock_requested)
         self.out_btn.clicked.connect(self.sign_out_requested)
         bar.addWidget(self.lock_btn)
@@ -99,8 +116,8 @@ class MainWindow(QWidget):
         for text, needs in MENU:
             if needs is None or any(has_permission(conn, session.user_id, perm) for perm in needs):
                 self.allowed.append(text)
-                self.menu.addItem(QListWidgetItem(text))
-                self.pages.addWidget(self._page_for(text, profile))
+                self.menu.addItem(QListWidgetItem(tr(text)))
+                self.pages.addWidget(self._page_for(text))
         self.menu.currentRowChanged.connect(self._open)
         self.menu.setCurrentRow(0)
 
@@ -116,68 +133,64 @@ class MainWindow(QWidget):
 
         QShortcut(QKeySequence("Ctrl+L"), self, activated=self.lock_requested.emit)
 
-    def _page_for(self, text: str, profile: dict) -> QWidget:
-        """Returns the real functional view widget for each menu option."""
-        user_id = self.session.user_id
+    # ------------------------------------------------------------ pages
+
+    def _page_for(self, text: str) -> QWidget:
+        """The page for a menu entry. A failure becomes an error page, never a crash."""
+        try:
+            return self._build(text)
+        except Exception:
+            log.exception("Screen '%s' could not be built", text)
+            return PlaceholderPage(
+                tr(text), tr("This screen could not be opened. The rest of the app still works. "
+                             "Please tell whoever looks after the software."), "error",
+            )
+
+    def _build(self, text: str) -> QWidget:
+        conn, session, user_id = self.conn, self.session, self.session.user_id
+
+        # A file in ui/screens/ for this menu entry always wins (see ui/screens/__init__.py).
+        plugged = screens.build_screen(text, conn, session, self.folder)
+        if plugged is not None:
+            return plugged
+
+        if text == "Dashboard":
+            from ui.dashboard_page import DashboardPage
+            return DashboardPage(conn, session)
+
+        if text == "New Sale / Billing":
+            from ui.billing_counter_view import BillingCounterView
+            return BillingCounterView(conn, session, self.folder)
 
         if text == "Backup and Restore":
-            view = BackupRestoreView(self.conn, self.session, self.folder)
+            from ui.backup_view import BackupRestoreView
+            view = BackupRestoreView(conn, session, self.folder)
             view.restored.connect(self.restored)
             return view
 
-        if text in ["Dashboard", "Reports"]:
-            return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
+        if text == "Suppliers":
+            from ui.suppliers_view import SuppliersManagementView
+            return SuppliersManagementView(db_connection=conn, user_id=user_id)
 
-        elif text == "New Sale / Billing":
-            return FastBillingCounterView(db_connection=self.conn, user_id=user_id)
+        if text == "Users and Permissions":
+            from ui.users_permissions_view import UsersAndPermissionsView
+            return UsersAndPermissionsView(db_connection=conn, user_id=user_id)
 
-        elif text == "Purchases":
-            return PurchasesManagementView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Suppliers":
-            return SuppliersManagementView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Customers":
-            return CustomersView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Sales Returns and Exchanges":
-            return ReturnsAndCustomerLedgerView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Purchase Returns":
-            return PurchaseReturnsView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Payments and Cash":
-            return CashClosingAndAuditView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Expenses":
-            return ExpensesView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Stock Count and Adjustments":
-            return StockCountView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Users and Permissions":
-            return UsersAndPermissionsView(db_connection=self.conn, user_id=user_id)
-
-        elif text == "Settings":
-            return SettingsView(db_connection=self.conn, user_id=user_id)
-
-        elif text in ["Products", "Stock and Variants"]:
-            return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
-
-        return DashboardAndReportsView(db_connection=self.conn, user_id=user_id)
+        return PlaceholderPage(tr(text), tr(PENDING.get(text, N_("This screen is not connected yet."))))
 
     def _open(self, row: int) -> None:
-        if row >= 0:
+        if row < 0:
+            return
+        try:
+            self.session.touch()
+        except SessionLocked:
+            self.lock_requested.emit()
+            return
+        page = self.pages.widget(row)
+        refresh = getattr(page, "refresh", None)
+        if callable(refresh):
             try:
-                self.session.touch()
-            except SessionLocked:
-                self.lock_requested.emit()
-                return
-            
-            selected_text = self.allowed[row]
-            
-            if selected_text == "Products":
-                dlg = MatrixProductDialog(self, db_connection=self.conn, user_id=self.session.user_id)
-                dlg.exec()
-            
-            self.pages.setCurrentIndex(row)
+                refresh()
+            except Exception:
+                log.exception("Screen '%s' could not refresh", self.allowed[row])
+        self.pages.setCurrentIndex(row)

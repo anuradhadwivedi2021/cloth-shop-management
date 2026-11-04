@@ -11,3 +11,6 @@ __pycache__/
 *.keys
 safety_backups/
 cloth-shop-src.zip
+
+build/
+dist/

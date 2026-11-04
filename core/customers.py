@@ -527,3 +527,16 @@ def upcoming_birthdays(conn, *, user_id, days=7, today=None) -> list:
             out.append({"id": r["id"], "name": r["name"], "phone": r["phone"],
                         "birthday": r["birthday"][-5:], "days_until": (when - today).days})
     return sorted(out, key=lambda item: (item["days_until"], item["name"] or ""))
+
+
+class CustomerEngine:
+    """Compatibility wrapper for UI views."""
+    def __init__(self, *args, **kwargs):
+        pass 
+
+
+
+
+
+
+

@@ -410,6 +410,43 @@ MIGRATIONS = {
 }
 
 
+def discover_migrations(directory=None, package="db"):
+    """Find files db/migration_<number>.py and return {number: SQL script from its MIGRATION_<number>}.
+
+    This is how a new migration is added: just create db/migration_13.py that defines MIGRATION_13 as a SQL string.
+    Nobody edits this file. Numbers must be unique; a file whose number is already used by a different
+    script raises an error at start-up (two people must not use the same number). Files in sub-folders
+    (for example db/deferred/) are never picked up.
+    """
+    import importlib
+    import re
+    from pathlib import Path
+
+    folder = Path(directory) if directory else Path(__file__).resolve().parent
+    found = {}
+    for path in sorted(folder.glob("migration_*.py")):
+        match = re.fullmatch(r"migration_(\d+)\.py", path.name)
+        if not match:
+            continue
+        number = int(match.group(1))
+        module = importlib.import_module(f"{package}.{path.stem}")
+        script = getattr(module, f"MIGRATION_{number}", None)
+        if not isinstance(script, str):
+            raise RuntimeError(f"{path.name} must define MIGRATION_{number} as a SQL string.")
+        found[number] = script
+    return found
+
+
+def _register_discovered():
+    for number, script in discover_migrations().items():
+        if number in MIGRATIONS and MIGRATIONS[number] != script:
+            raise RuntimeError(f"Migration number {number} is used twice with different scripts.")
+        MIGRATIONS.setdefault(number, script)
+
+
+_register_discovered()
+
+
 
 def migrate(conn):
     """Bring the database up to the latest schema version (safe to call every start)."""

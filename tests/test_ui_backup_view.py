@@ -216,7 +216,8 @@ def test_the_fake_file_copy_backup_is_gone_from_the_dashboard():
 
 def test_backup_menu_opens_the_real_backup_screen(s, qapp):
     from ui.main_window import MainWindow
-    window = MainWindow(s.conn, s.session, {"name": "Test"}, folder=s.folder)
+    profile = {"name": "anu", "role": "Owner"}
+    window = MainWindow(s.conn, s.session, profile, folder=s.folder)
     index = window.allowed.index("Backup and Restore")
     assert isinstance(window.pages.widget(index), BackupRestoreView)
     _dispose(window)
