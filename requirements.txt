@@ -4,3 +4,4 @@ argon2-cffi
 reportlab
 pytest
 cryptography
+openpyxl

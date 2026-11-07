@@ -20,6 +20,7 @@ from datetime import date
 
 from core.audit import log_event
 from core.numbering import financial_year, next_number
+from core.permissions import require_permission
 from core.settings import get_bool
 from core.stock import InsufficientStockError, add_movement
 from core.tax import calculate_bill, load_tax_rules
@@ -35,6 +36,23 @@ SALE_SERIES = {
 # store credit, vouchers and loyalty points need their own ledgers (Phase 2);
 # until then they are refused so money never "disappears" into an unknown balance.
 ACCEPTED_PAYMENT_MODES = ("cash", "upi", "card", "bank_transfer", "cheque", "other")
+
+# The owner can switch these off in Settings (one setting per mode, e.g. pay_upi_enabled). Cash cannot be
+# switched off: the cash register and the day closing depend on it. Switching a mode off only stops NEW
+# payments with it; bills already saved keep it.
+SWITCHABLE_PAYMENT_MODES = ("upi", "card", "bank_transfer", "cheque", "other")
+
+
+def payment_mode_setting(mode: str) -> str:
+    return f"pay_{mode}_enabled"
+
+
+def enabled_payment_modes(conn) -> tuple:
+    """The payment modes the shop accepts now (a subset of ACCEPTED_PAYMENT_MODES, cash always included)."""
+    return tuple(
+        mode for mode in ACCEPTED_PAYMENT_MODES
+        if mode not in SWITCHABLE_PAYMENT_MODES or get_bool(conn, payment_mode_setting(mode), True)
+    )
 
 MAX_HELD_BILLS = 10
 
@@ -68,7 +86,7 @@ def _label(row) -> str:
 
 # ---------- paying the bill ----------
 
-def _settle_payments(payments, total, *, credit_ok, customer_id):
+def _settle_payments(payments, total, *, credit_ok, customer_id, modes=ACCEPTED_PAYMENT_MODES):
     """Work out what is really recorded. Returns (applied, tendered, change, due).
 
     - Cash handed over above the total is change; only the net cash is recorded.
@@ -79,10 +97,8 @@ def _settle_payments(payments, total, *, credit_ok, customer_id):
     for pay in payments or []:
         mode = pay.get("mode")
         amount = pay.get("amount_paise")
-        if mode not in ACCEPTED_PAYMENT_MODES:
-            raise ValueError(
-                f"Payment mode '{mode}' is not available. Use one of: {', '.join(ACCEPTED_PAYMENT_MODES)}."
-            )
+        if mode not in modes:
+            raise ValueError(f"Payment mode '{mode}' is not available. Use one of: {', '.join(modes)}.")
         if not isinstance(amount, int) or amount <= 0:
             raise ValueError("Each payment must be a positive amount in paise.")
         applied.append({"mode": mode, "amount_paise": amount, "reference": pay.get("reference")})
@@ -234,7 +250,8 @@ def save_sale_in_transaction(
     total = calc["total_paise"]
     credit_used = min(max(int(credit_available_paise or 0), 0), total)
     applied, tendered, change, _due = _settle_payments(
-        payments, total - credit_used, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id
+        payments, total - credit_used, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id,
+        modes=enabled_payment_modes(conn),
     )
 
     series, prefix = SALE_SERIES[mode]
@@ -345,6 +362,59 @@ def find_sale_by_invoice_no(conn, invoice_no):
         "SELECT id FROM sales WHERE upper(invoice_no) = upper(trim(?))", (invoice_no or "",)
     ).fetchone()
     return row["id"] if row else None
+
+
+def find_sales(conn, *, user_id, text=None, phone=None, date_from=None, date_to=None, limit=30) -> list:
+    """Find bills for the returns screen by (part of) the bill number, the customer's phone and/or a date range.
+
+    Newest first. Needs the process_return permission. Only bill facts come back (id, number, date, total,
+    status, whether a saved customer is on it): never a name or phone number, so this cannot be used to
+    read customer details. Dates are 'YYYY-MM-DD'. At least one search term is needed, so the screen never
+    lists every bill by accident.
+    """
+    require_permission(conn, user_id, "process_return", "find bills")
+    text = (text or "").strip()
+    phone = (phone or "").strip()
+    date_from = (date_from or "").strip() or None
+    date_to = (date_to or "").strip() or None
+    if not (text or phone or date_from or date_to):
+        raise ValueError("Enter a bill number, a phone number or a date to search.")
+
+    where, params = ["1 = 1"], []
+    if text:
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("upper(s.invoice_no) LIKE upper(?) ESCAPE '\\'")
+        params.append(f"%{escaped}%")
+    if phone:
+        from core.customers import _phone_digits  # imported here: core.customers itself imports core.returns
+
+        digits = _phone_digits(phone)
+        if len(digits) < 4:
+            raise ValueError("Type at least 4 digits of the phone number.")
+        where.append("c.phone LIKE ?")
+        params.append(f"%{digits}%")
+    for label, value, op in (("The first date", date_from, ">="), ("The second date", date_to, "<=")):
+        if value:
+            try:
+                value = date.fromisoformat(value).isoformat()
+            except ValueError:
+                raise ValueError(f"{label} must be a valid date.") from None
+            where.append(f"date(s.created_at) {op} ?")
+            params.append(value)
+    if date_from and date_to and date_from > date_to:
+        raise ValueError("The first date must not be after the second date.")
+
+    rows = conn.execute(
+        "SELECT s.id, s.invoice_no, s.created_at, s.total_paise, s.status, s.customer_id IS NOT NULL AS has_customer "
+        "FROM sales s LEFT JOIN customers c ON c.id = s.customer_id "
+        f"WHERE {' AND '.join(where)} ORDER BY s.id DESC LIMIT ?",
+        (*params, max(1, min(int(limit), 200))),
+    ).fetchall()
+    return [
+        {"id": r["id"], "invoice_no": r["invoice_no"], "created_at": r["created_at"], "total_paise": r["total_paise"],
+         "status": r["status"], "has_customer": bool(r["has_customer"])}
+        for r in rows
+    ]
 
 
 def reprint_sale(conn, sale_id, *, user_id) -> dict:

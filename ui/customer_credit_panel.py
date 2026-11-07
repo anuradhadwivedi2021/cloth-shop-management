@@ -26,6 +26,7 @@ from core import customer_credit as cc
 from core.money import format_rupees, parse_rupees
 from core.permissions import has_permission
 from core.purchase_service import format_ui_date, parse_ui_date
+from core.sales import enabled_payment_modes
 from core.settings import get_bool
 from ui.i18n import tr
 from ui.screen_helpers import MODE_TEXT, ScreenBase, add_row, make_table
@@ -94,8 +95,10 @@ class CustomerCreditPanel(ScreenBase, QWidget):
                            "hint"))
         row = QHBoxLayout()
         self.cmb_mode = QComboBox()
+        accepted = enabled_payment_modes(self.conn)
         for mode in cc.RECEIPT_MODES:
-            self.cmb_mode.addItem(tr(MODE_TEXT[mode]), mode)
+            if mode in accepted:
+                self.cmb_mode.addItem(tr(MODE_TEXT[mode]), mode)
         self.txt_amount = QLineEdit()
         self.txt_amount.setPlaceholderText(tr("Amount received (₹)"))
         self.txt_reference = QLineEdit()

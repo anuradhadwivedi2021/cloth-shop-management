@@ -17,6 +17,7 @@ from core.permissions import PermissionDenied, has_permission
 from core.product_edit import DuplicateProductError
 from core.product_list import list_products
 from ui.i18n import tr
+from ui.size_set_widgets import SizeSetPicker
 from ui.widgets import form, label
 
 MENU_TEXT = "Products"
@@ -33,7 +34,7 @@ def _show_error(parent, exc):
 
 
 class NewProductDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, conn=None, user_id=None):
         super().__init__(parent)
         self.setWindowTitle(tr("New product"))
         self.edits = {k: QLineEdit() for k in ("name", "category", "price", "cost", "sizes", "colours")}
@@ -43,6 +44,9 @@ class NewProductDialog(QDialog):
         for key, text in (("name", "Name"), ("category", "Category"), ("price", "Selling price"),
                           ("cost", "Cost"), ("sizes", "Sizes (comma separated)"),
                           ("colours", "Colours (comma separated)")):
+            if key == "sizes" and conn is not None:
+                self.size_picker = SizeSetPicker(conn, user_id, self.edits["sizes"])
+                rows.addRow(tr("Size set"), self.size_picker)
             rows.addRow(tr(text), self.edits[key])
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -133,7 +137,7 @@ class ProductsScreen(QWidget):
                 self.table.setItem(i, j, QTableWidgetItem(text))
 
     def _new(self):
-        dialog = NewProductDialog(self)
+        dialog = NewProductDialog(self, self.conn, self.session.user_id)
         if dialog.exec() != QDialog.Accepted:
             return
         values = dialog.values()

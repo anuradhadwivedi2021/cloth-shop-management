@@ -26,7 +26,7 @@ from datetime import date, timedelta
 
 from core.audit import log_event
 from core.numbering import financial_year, next_number
-from core.sales import ACCEPTED_PAYMENT_MODES, _on, save_sale_in_transaction
+from core.sales import ACCEPTED_PAYMENT_MODES, _on, enabled_payment_modes, save_sale_in_transaction
 from core.settings import get_setting
 from core.stock import add_movement
 from db.connection import transaction
@@ -355,10 +355,11 @@ def process_return(
         mode = None
         if refund > 0:
             mode = refund_mode or _default_refund_mode(conn, sale_id)
-            if mode not in ACCEPTED_PAYMENT_MODES:
-                raise ValueError(
-                    f"Refund mode '{mode}' is not available. Use one of: {', '.join(ACCEPTED_PAYMENT_MODES)}."
-                )
+            # A method the owner picked must be one the shop accepts now. "Same as the original payment" is
+            # always allowed, even if that method was switched off since the sale.
+            allowed = enabled_payment_modes(conn) if refund_mode else ACCEPTED_PAYMENT_MODES
+            if mode not in allowed:
+                raise ValueError(f"Refund mode '{mode}' is not available. Use one of: {', '.join(allowed)}.")
 
         # ---- save the credit note ----
         overall_reason = (reason or "").strip() or "; ".join(sorted({l["reason"] for l in lines}))

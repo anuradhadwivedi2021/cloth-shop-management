@@ -107,13 +107,13 @@ def test_menu_follows_permissions(s):
 
 def test_connected_screens_are_the_real_ones(s):
     from ui.backup_view import BackupRestoreView
-    from ui.dashboard_page import DashboardPage
+    from ui.screens.dashboard_screen import DashboardScreen
     from ui.suppliers_view import SuppliersManagementView
     from ui.users_permissions_view import UsersAndPermissionsView
 
     conn, _, window = _window(s, "owner")
     expected = {
-        "Dashboard": DashboardPage, "Backup and Restore": BackupRestoreView,
+        "Dashboard": DashboardScreen, "Backup and Restore": BackupRestoreView,
         "Suppliers": SuppliersManagementView, "Users and Permissions": UsersAndPermissionsView,
     }
     for text, cls in expected.items():

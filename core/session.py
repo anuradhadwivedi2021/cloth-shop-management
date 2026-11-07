@@ -42,6 +42,16 @@ class Session:
         self._manual = False
 
     @property
+    def timeout_minutes(self) -> int:
+        return self._timeout // 60
+
+    def set_timeout_minutes(self, minutes: int) -> None:
+        """Change the idle time before locking for this signed-in session (used right after setup)."""
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes < 1:
+            raise ValueError("Auto-lock time must be at least 1 minute.")
+        self._timeout = minutes * 60
+
+    @property
     def locked(self) -> bool:
         return self._manual or (self._clock() - self._last) >= self._timeout
 

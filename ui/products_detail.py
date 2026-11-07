@@ -26,6 +26,7 @@ from core.product_detail import (
 )
 from core.product_edit import set_product_active, set_rack_location, set_variant_active
 from ui.i18n import N_, tr
+from ui.size_set_widgets import SizeSetPicker
 from ui.widgets import form, label
 
 log = logging.getLogger(__name__)
@@ -174,6 +175,8 @@ class ProductDetailView(QWidget):
         self.new_colours.setPlaceholderText(tr("Colours, for example Blue, Red"))
         self.new_sizes.textChanged.connect(self._update_preview)
         self.new_colours.textChanged.connect(self._update_preview)
+        self.size_picker = SizeSetPicker(self.conn, self.session.user_id, self.new_sizes)
+        layout.addWidget(self.size_picker)
         self.add_btn = QPushButton(tr("Add"))
         self.add_btn.clicked.connect(lambda: self._run(self._add_variants))
         add_row = QHBoxLayout()

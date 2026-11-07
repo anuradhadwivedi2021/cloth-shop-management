@@ -269,9 +269,8 @@ def test_main_window_opens_in_the_shops_language(window_for):
 # ================================================================ printing interface
 
 def test_printing_says_not_connected_instead_of_pretending():
+    # bills are connected (tests/test_print_service.py); these three are still to come
     for result in (
-        print_service.print_bill(None, None, 1),
-        print_service.save_bill_pdf(None, None, 1, "x.pdf"),
         print_service.print_credit_note(None, None, 1),
         print_service.print_receipt(None, None, 1),
         print_service.print_labels(None, None, [{"variant_id": 1, "copies": 2}]),
@@ -281,4 +280,4 @@ def test_printing_says_not_connected_instead_of_pretending():
 
 def test_print_message_follows_the_language():
     i18n.set_language("hi")
-    assert "प्रिंटिंग" in print_service.print_bill(None, None, 1).message
+    assert "प्रिंटिंग" in print_service.print_receipt(None, None, 1).message

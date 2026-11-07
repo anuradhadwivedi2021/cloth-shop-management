@@ -250,6 +250,12 @@ SPEC = {
     "allow_negative_stock": dict(kind="bool", default="0", group="Selling", label="Allow selling more than the stock count"),
     "default_bill_mode": dict(kind="choice", default="regular", choices=("regular", "composition", "unregistered"),
                               group="Selling", label="Bill type shown first at the counter"),
+    # --- payments (cash is always accepted)
+    "pay_upi_enabled": dict(kind="bool", default="1", group="Payments", label="Accept UPI"),
+    "pay_card_enabled": dict(kind="bool", default="1", group="Payments", label="Accept card"),
+    "pay_bank_transfer_enabled": dict(kind="bool", default="1", group="Payments", label="Accept bank transfer"),
+    "pay_cheque_enabled": dict(kind="bool", default="1", group="Payments", label="Accept cheque"),
+    "pay_other_enabled": dict(kind="bool", default="1", group="Payments", label="Accept other payment methods"),
     # --- returns
     "return_window_days": dict(kind="int", default="", optional=True, min=0, max=365, group="Returns",
                                label="Days allowed for returns (empty = no limit)"),

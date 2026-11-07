@@ -33,7 +33,7 @@ def main() -> int:
         logging.getLogger("clothshop").exception("E-START: could not start")
         QMessageBox.critical(None, "Cloth Shop", "The app could not start (error E-START).")
         return 1
-    window.show()
+    window.showMaximized()
     return qt.exec()
 
 

@@ -14,3 +14,9 @@ cloth-shop-src.zip
 
 build/
 dist/
+
+ClothShop_Test/
+dist/
+build/
+*.exe
+*.spec.bak

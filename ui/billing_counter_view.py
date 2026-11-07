@@ -34,7 +34,10 @@ from core.guarded import sell
 from core.money import format_rupees, parse_rupees
 from core.permissions import PermissionDenied, discount_cap_percent, has_permission
 from core.products import search_products
-from core.sales import ACCEPTED_PAYMENT_MODES, discard_held_bill, get_sale, hold_bill, list_held_bills, resume_held_bill
+from core.sales import (
+    ACCEPTED_PAYMENT_MODES, discard_held_bill, enabled_payment_modes, get_sale, hold_bill, list_held_bills,
+    resume_held_bill,
+)
 from core.session import SessionLocked
 from core.settings import get_bool
 from core.shop_settings import billing_problems, get_shop_profile, place_of_supply
@@ -241,7 +244,7 @@ class PaymentDialog(QDialog):
 
     ROWS = 3
 
-    def __init__(self, total_paise, on_save, *, credit_ok=False, has_customer=False, parent=None):
+    def __init__(self, total_paise, on_save, *, credit_ok=False, has_customer=False, modes=ACCEPTED_PAYMENT_MODES, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("Payment"))
         self.total, self._on_save, self._busy = total_paise, on_save, False
@@ -250,7 +253,7 @@ class PaymentDialog(QDialog):
         self.rows = []
         for i in range(self.ROWS):
             combo = QComboBox()
-            for mode in ACCEPTED_PAYMENT_MODES:
+            for mode in modes:
                 combo.addItem(tr(MODE_LABELS.get(mode, mode)), mode)
             amount = QLineEdit(_plain(total_paise) if i == 0 else "")
             amount.setPlaceholderText(tr("Amount"))
@@ -915,7 +918,8 @@ class BillingCounterView(QWidget):
             return
         dlg = PaymentDialog(
             self._preview["total_paise"], self.save_bill,
-            credit_ok=get_bool(self.conn, "credit_sales_enabled"), has_customer=self.customer_id is not None, parent=self,
+            credit_ok=get_bool(self.conn, "credit_sales_enabled"), has_customer=self.customer_id is not None,
+            modes=enabled_payment_modes(self.conn), parent=self,
         )
         dlg.exec()
         self._focus_scan()

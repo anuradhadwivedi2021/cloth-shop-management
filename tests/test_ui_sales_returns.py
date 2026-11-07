@@ -4,6 +4,7 @@ return, keeps returned pieces out of sellable stock until they are checked, and 
 
 import os
 import sqlite3
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -96,6 +97,86 @@ def test_an_unknown_bill_number_says_so(s):
     view.find_bill()
     assert "No bill" in view.lbl_status.text()
     assert view.tbl_lines.rowCount() == 0 and not view.btn_process.isEnabled()
+
+
+# ---------------------------------------------------------------- finding the bill by phone or date (RET-01)
+
+def _bill_for_customer(conn, s, phone="9876543210"):
+    owner = conn.execute("SELECT id FROM users WHERE username = 'owner'").fetchone()["id"]
+    customer = create_customer(conn, phone, user_id=owner, name="Anu", consent_given=True, consent_purpose="Billing")
+    sale = create_sale(conn, [{"variant_id": s.polo, "qty": 1}], [{"mode": "cash", "amount_paise": 135000}],
+                       user_id=owner, customer_id=customer)
+    return sale, conn.execute("SELECT invoice_no FROM sales WHERE id = ?", (sale,)).fetchone()["invoice_no"]
+
+
+def test_a_bill_is_found_by_the_customers_phone_and_opened(s):
+    conn, view, shown = _open(s)
+    sale, invoice = _bill_for_customer(conn, s)
+    view.txt_phone.setText("98765")
+    view.search_bills()
+    assert view.tbl_found.isHidden() is False and view.tbl_found.rowCount() == 1
+    assert view.tbl_found.item(0, 0).text() == invoice
+    assert format_rupees(135000) in view.tbl_found.item(0, 2).text()
+    assert "1 bill" in view.lbl_status.text()
+    view.tbl_found.selectRow(0)
+    view.open_found_bill()
+    assert view._sale_id == sale and invoice in view.lbl_bill.text()
+    assert view.txt_invoice.text() == invoice and view.btn_process.isEnabled()
+    assert shown.errors == []
+
+
+def test_a_bill_is_found_by_date_and_by_part_of_its_number(s):
+    conn, view, shown = _open(s)
+    today = date.today().strftime("%d/%m/%Y")
+    view.txt_from.setText(today)
+    view.txt_to.setText(today)
+    view.search_bills()
+    assert view.tbl_found.rowCount() == 1 and view.tbl_found.item(0, 0).text() == s.invoice
+    view.txt_from.clear()
+    view.txt_to.clear()
+    view.txt_invoice.setText(s.invoice[-4:])
+    view.search_bills()
+    assert view.tbl_found.rowCount() == 1
+
+
+def test_a_search_with_no_match_says_so_and_a_bad_search_is_explained(s):
+    conn, view, shown = _open(s)
+    view.txt_phone.setText("1111")
+    view.search_bills()
+    assert view.tbl_found.rowCount() == 0 and "No bills found" in view.lbl_status.text()
+    view.txt_phone.setText("12")
+    view.search_bills()
+    assert "at least 4 digits" in view.lbl_status.text() and view.tbl_found.isHidden()
+    view.txt_phone.clear()
+    view.txt_from.setText("31/02/2026")
+    view.search_bills()
+    assert "04/11/2026" in view.lbl_status.text()
+    view.txt_from.clear()
+    view.search_bills()
+    assert "Enter a bill number" in view.lbl_status.text()
+    assert shown.errors == []                       # explained on the screen, no pop-ups
+
+
+def test_opening_without_choosing_a_bill_asks_to_choose(s):
+    conn, view, shown = _open(s)
+    view.open_found_bill()
+    assert "Select a bill" in view.lbl_status.text() and view._sale_id is None
+
+
+def test_stock_staff_cannot_search_for_bills(s):
+    conn, view, shown = _open(s, "store")
+    view.txt_phone.setText("98765")
+    view.search_bills()
+    assert "not allowed" in view.lbl_status.text() and view.tbl_found.rowCount() == 0
+
+
+def test_the_search_texts_are_translated():
+    from ui.i18n import set_language, tr
+    set_language("hi")
+    try:
+        assert tr("Search bills") != "Search bills" and tr("Type at least 4 digits of the phone number.") != "Type at least 4 digits of the phone number."
+    finally:
+        set_language("en")
 
 
 # ---------------------------------------------------------------- refund

@@ -233,12 +233,12 @@ class SetupPage(QWidget):
             try:
                 update_shop_profile(conn, session.user_id, **self._profile)
                 update_preferences(conn, session.user_id, {"auto_lock_minutes": self.autolock.currentData()})
+                session.set_timeout_minutes(self.autolock.currentData())
             except Exception:
                 conn.close()  # leave nothing half-made behind, so the owner can simply try again
                 for name in (shop.DB_FILE, shop.KEY_FILE):
                     (Path(self.folder) / name).unlink(missing_ok=True)
                 raise
-            session.set_timeout_minutes(self.autolock.currentData())
         except ValueError:
             raise
         except Exception:

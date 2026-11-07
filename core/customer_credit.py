@@ -27,6 +27,7 @@ from core.audit import log_event
 from core.money import format_rupees
 from core.numbering import financial_year, next_number
 from core.permissions import PermissionDenied, has_permission, require_permission
+from core.sales import enabled_payment_modes
 from db.connection import transaction
 
 RECEIPT_SERIES = "RCT"
@@ -346,8 +347,9 @@ def receive_payment(
     saved together or not at all. The same `idempotency_key` returns the receipt already saved.
     """
     amount = _paise(amount_paise)
-    if mode not in RECEIPT_MODES:
-        raise ValueError(f"Payment mode '{mode}' is not available. Use one of: {', '.join(RECEIPT_MODES)}.")
+    accepted = tuple(m for m in RECEIPT_MODES if m in enabled_payment_modes(conn))
+    if mode not in accepted:
+        raise ValueError(f"Payment mode '{mode}' is not available. Use one of: {', '.join(accepted)}.")
     if customer_id is None and sale_id is None:
         raise ValueError("Select a customer or a bill.")
     key = (idempotency_key or "").strip() or None

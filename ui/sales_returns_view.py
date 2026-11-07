@@ -6,8 +6,9 @@ number rules live in core.returns (one transaction per return) and the permissio
 in core.guarded.return_items, so they hold even if this screen is wrong.
 
 Two tabs:
-  * Return or exchange: find the bill by its number, choose the pieces, the reason and the outcome
-    (refund, store credit or exchange). For an exchange the replacement items are chosen here and the
+  * Return or exchange: find the bill by its number (or part of it), the customer's phone and/or the date,
+    choose the pieces, the reason and the outcome (refund, store credit or exchange). A walk-in bill that
+    ends in store credit needs a saved customer to give the credit to: the screen asks for one. For an exchange the replacement items are chosen here and the
     screen shows what the customer pays or gets back BEFORE anything is saved.
   * Returned items to check: returned pieces are NOT sellable until an authorised user decides they
     are fit for resale or damaged (RET-05).
@@ -34,10 +35,10 @@ from core import guarded, returns as rt, stock_ops
 from core.auth import AuthError
 from core.customers import search_customers
 from core.money import format_rupees, parse_rupees
-from core.permissions import PermissionDenied, has_permission
+from core.permissions import has_permission
 from core.products import search_products
-from core.purchase_service import format_ui_date, safe_message
-from core.sales import find_sale_by_invoice_no, get_sale
+from core.purchase_service import format_ui_date, parse_ui_date, safe_message
+from core.sales import enabled_payment_modes, find_sale_by_invoice_no, find_sales, get_sale
 from ui.billing_counter_view import VariantPickerDialog
 from ui.i18n import N_, tr
 from ui.screen_helpers import MODE_TEXT, ScreenBase, add_row, make_table
@@ -115,10 +116,11 @@ class ReplacementDialog(QDialog):
 
 
 class ReturnCustomerDialog(QDialog):
-    """Pick the saved customer who gets the store credit. Result: .customer_id and .customer_name.
+    """Choose the saved customer who gets the store credit of a walk-in bill. Result: .customer_id, .customer_name.
 
-    Only saved, active customers are listed: store credit needs a profile to belong to. (A walk-in bill has no
-    profile, so the customer is chosen here, or added first in the Customers menu.)"""
+    Lists active saved customers only (newest first, or those matching what was typed). Needs the
+    view-customers permission; a fault shows a short message without technical detail.
+    """
 
     def __init__(self, conn, user_id, parent=None):
         super().__init__(parent)
@@ -126,48 +128,40 @@ class ReturnCustomerDialog(QDialog):
         self.customer_id, self.customer_name = None, None
         self.setWindowTitle(tr("Choose the customer"))
         self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText(tr("Type a name or phone number"))
+        self.txt_search.setPlaceholderText(tr("Search by name or phone number"))
         self.results = QListWidget()
-        self.message = label("", "hint")
+        self.message = label("", "error")
         col = QVBoxLayout(self)
         col.addWidget(self.txt_search)
         col.addWidget(self.results, 1)
         col.addWidget(self.message)
         self.txt_search.textChanged.connect(self._fill)
-        self.txt_search.returnPressed.connect(self._focus_list)   # plain methods, not lambdas
         self.results.itemActivated.connect(self._pick)
-        self.resize(460, 380)
+        self.results.itemDoubleClicked.connect(self._pick)
+        self.resize(480, 360)
         self._fill()
-
-    def _focus_list(self, *_):
-        self.results.setFocus()
 
     def _fill(self, *_):
         self.results.clear()
+        self.message.setText("")
         try:
-            rows = search_customers(self.conn, self.txt_search.text(), user_id=self.user_id, limit=30)
-        except PermissionDenied:
-            self.message.setText(tr("You are not allowed to view customers."))
-            return
-        except Exception:  # noqa: BLE001 - the screen must not show technical detail
-            log.exception("Customer search failed in the return screen")
-            self.message.setText(tr("The customers could not be loaded."))
+            rows = search_customers(self.conn, self.txt_search.text(), user_id=self.user_id, limit=50)
+        except Exception as exc:  # noqa: BLE001 - every failure becomes a short message
+            text, expected = safe_message(exc)
+            if not expected:
+                log.exception("Customer search failed")
+            self.message.setText(tr(text) if expected else tr("The customers could not be loaded."))
             return
         for r in rows:
-            name = r["name"] or tr("(no name)")
-            item = QListWidgetItem(f"{name}  -  {r['phone']}")
-            item.setData(Qt.UserRole, r["id"])
-            item.setData(Qt.UserRole + 1, name)
+            name = r["name"] or r["phone"]
+            item = QListWidgetItem(f"{name}   {r['phone']}" if r["name"] else r["phone"])
+            item.setData(Qt.UserRole, (r["id"], name))
             self.results.addItem(item)
-        if rows:
-            self.results.setCurrentRow(0)
-            self.message.setText(tr("Press Enter in the search box to move to the list, Enter again to choose."))
-        else:
+        if not rows:
             self.message.setText(tr("No customer found. Add the customer in the Customers menu first."))
 
     def _pick(self, item):
-        self.customer_id = item.data(Qt.UserRole)
-        self.customer_name = item.data(Qt.UserRole + 1)
+        self.customer_id, self.customer_name = item.data(Qt.UserRole)
         self.accept()
 
 
@@ -182,10 +176,11 @@ class SalesReturnsView(ScreenBase, QWidget):
         self._lines = []          # returnable_lines() of that bill
         self._boxes = []          # one spin box per line: pieces to return
         self._cart = []           # replacement items for an exchange
-        self._credit_customer = None   # (id, name) who gets the store credit when the bill is a walk-in bill
-        self._surplus_credit = False   # an exchange whose difference is paid back as store credit
         self._pending = []        # rows waiting for the resale check
         self._busy = False
+        self._found = []          # bills listed by the search
+        self._credit_customer = None  # (id, name) chosen to get the store credit of a walk-in bill
+        self._difference = None   # what the customer pays (+) or gets back (-) in an exchange, once known
         self._key = uuid.uuid4().hex  # one key per return attempt, renewed after a successful one
 
         self.lbl_status = label("", "error")
@@ -202,6 +197,25 @@ class SalesReturnsView(ScreenBase, QWidget):
         find.addWidget(self.txt_invoice, 1)
         find.addWidget(self.btn_find)
         col.addLayout(find)
+        search = QHBoxLayout()
+        self.txt_phone = QLineEdit()
+        self.txt_phone.setPlaceholderText(tr("Customer phone (at least 4 digits)"))
+        self.txt_from, self.txt_to = QLineEdit(), QLineEdit()
+        self.txt_from.setPlaceholderText("DD/MM/YYYY")
+        self.txt_to.setPlaceholderText("DD/MM/YYYY")
+        self.btn_search = QPushButton(tr("Search bills"))
+        search.addWidget(self.txt_phone, 2)
+        search.addWidget(self.txt_from, 1)
+        search.addWidget(self.txt_to, 1)
+        search.addWidget(self.btn_search)
+        col.addLayout(search)
+        self.tbl_found = make_table([tr("Bill"), tr("Bill date"), tr("Bill total"), tr("Status")])
+        self.tbl_found.setMaximumHeight(150)
+        self.tbl_found.setVisible(False)
+        self.btn_open_found = QPushButton(tr("Open selected bill"))
+        self.btn_open_found.setVisible(False)
+        col.addWidget(self.tbl_found)
+        col.addWidget(self.btn_open_found)
         self.lbl_bill = label("", "hint")
         col.addWidget(self.lbl_bill)
 
@@ -222,13 +236,22 @@ class SalesReturnsView(ScreenBase, QWidget):
             self.cmb_outcome.addItem(tr(OUTCOME_TEXT[key]), key)
         self.cmb_refund_mode = QComboBox()
         self.cmb_refund_mode.addItem(tr("Same as the original payment"), None)
-        for mode in rt.ACCEPTED_PAYMENT_MODES:
+        for mode in enabled_payment_modes(conn):  # only the methods the shop accepts now
             self.cmb_refund_mode.addItem(tr(MODE_TEXT[mode]), mode)
         details.addRow(tr("Reason"), self.cmb_reason)
         details.addRow(tr("Note"), self.txt_note)
         details.addRow(tr("What the customer wants"), self.cmb_outcome)
         details.addRow(tr("Refund method"), self.cmb_refund_mode)
         col.addLayout(details)
+        self.row_credit = QWidget()
+        credit_row = QHBoxLayout(self.row_credit)
+        credit_row.setContentsMargins(0, 0, 0, 0)
+        self.lbl_credit_customer = label("", "hint")
+        self.btn_pick_customer = QPushButton(tr("Choose customer"))
+        credit_row.addWidget(self.lbl_credit_customer, 1)
+        credit_row.addWidget(self.btn_pick_customer)
+        self.row_credit.setVisible(False)
+        col.addWidget(self.row_credit)
 
         # ---- exchange part
         self.box_exchange = QGroupBox(tr("Replacement items"))
@@ -247,7 +270,7 @@ class SalesReturnsView(ScreenBase, QWidget):
         for key, text in SURPLUS_TEXT.items():
             self.cmb_surplus.addItem(tr(text), key)
         self.cmb_pay_mode = QComboBox()
-        for mode in rt.ACCEPTED_PAYMENT_MODES:
+        for mode in enabled_payment_modes(conn):  # only the methods the shop accepts now
             self.cmb_pay_mode.addItem(tr(MODE_TEXT[mode]), mode)
         self.txt_pay_amount = QLineEdit()
         self.txt_pay_amount.setPlaceholderText(tr("Amount the customer pays"))
@@ -258,17 +281,6 @@ class SalesReturnsView(ScreenBase, QWidget):
         pay.addWidget(self.txt_pay_amount)
         ex.addLayout(pay)
         col.addWidget(self.box_exchange)
-
-        # ---- who gets the store credit when the bill belongs to no saved customer (a walk-in bill)
-        self.row_credit = QWidget()
-        credit_row = QHBoxLayout(self.row_credit)
-        credit_row.setContentsMargins(0, 0, 0, 0)
-        self.lbl_credit_customer = label("", "hint")
-        self.btn_pick_customer = QPushButton(tr("Choose customer"))
-        credit_row.addWidget(self.lbl_credit_customer, 1)
-        credit_row.addWidget(self.btn_pick_customer)
-        self.row_credit.setVisible(False)
-        col.addWidget(self.row_credit)
 
         self.lbl_preview = label("", "title")
         col.addWidget(self.lbl_preview)
@@ -314,6 +326,10 @@ class SalesReturnsView(ScreenBase, QWidget):
         outer.addWidget(self.tabs, 1)
 
         self.btn_find.clicked.connect(self.find_bill)
+        self.btn_search.clicked.connect(self.search_bills)
+        self.txt_phone.returnPressed.connect(self.search_bills)
+        self.btn_open_found.clicked.connect(self.open_found_bill)
+        self.tbl_found.cellDoubleClicked.connect(self._found_double_clicked)
         self.btn_pick_customer.clicked.connect(self.choose_credit_customer)
         self.txt_invoice.returnPressed.connect(self.find_bill)
         self.cmb_outcome.currentIndexChanged.connect(self._outcome_changed)
@@ -346,6 +362,7 @@ class SalesReturnsView(ScreenBase, QWidget):
         self.reload_pending()
 
     def find_bill(self) -> None:
+        self._credit_customer = None  # a customer chosen for another bill never carries over
         number = self.txt_invoice.text().strip()
         if not number:
             self.lbl_status.setText(tr("Type the bill number first."))
@@ -359,7 +376,6 @@ class SalesReturnsView(ScreenBase, QWidget):
             self.lbl_status.setText(tr("No bill with that number was found."))
             return
         self._cart = []
-        self._credit_customer = None
         self._load_sale(sale_id)
 
     def _clear_bill(self):
@@ -441,33 +457,6 @@ class SalesReturnsView(ScreenBase, QWidget):
         self.box_exchange.setVisible(exchange)
         self._update_preview()
 
-    # ------------------------------------------------------------ store credit on a walk-in bill
-
-    def _needs_credit_customer(self) -> bool:
-        """Store credit will be added and the bill belongs to no saved customer, so one must be chosen."""
-        if self._bill is None or self._bill["sale"]["customer_id"] is not None:
-            return False
-        outcome = self._outcome()
-        return outcome == "store_credit" or (outcome == "exchange" and self._surplus_credit)
-
-    def choose_credit_customer(self, *_) -> None:
-        dialog = ReturnCustomerDialog(self.conn, self.user_id, self)
-        if dialog.exec() == QDialog.Accepted and dialog.customer_id is not None:
-            self.set_credit_customer(dialog.customer_id, dialog.customer_name)
-
-    def set_credit_customer(self, customer_id, name=None) -> None:
-        """Choose who gets the store credit (or None to clear the choice)."""
-        self._credit_customer = (customer_id, name or "") if customer_id is not None else None
-        self._paint_credit_customer()
-
-    def _paint_credit_customer(self) -> None:
-        chosen = self._credit_customer
-        if chosen:
-            self.lbl_credit_customer.setText(tr("Store credit goes to: {name}", name=chosen[1] or tr("(no name)")))
-        else:
-            self.lbl_credit_customer.setText(tr("This was a walk-in bill. Choose the customer who gets the store credit."))
-        self.btn_pick_customer.setText(tr("Change customer") if chosen else tr("Choose customer"))
-
     # ------------------------------------------------------------ replacement items (exchange)
 
     def choose_replacement(self) -> None:
@@ -524,8 +513,8 @@ class SalesReturnsView(ScreenBase, QWidget):
         exchange = self._outcome() == "exchange"
         items = self._items() if self._sale_id is not None else []
         show_pay, show_surplus, refund_possible = False, False, self._outcome() == "refund"
-        self._surplus_credit = False
         text = ""
+        self._difference = None
         if items:
             cart = self._cart if exchange else None
             ok, p = self._run(lambda: rt.preview_return(self.conn, self._sale_id, items, exchange_cart=cart),
@@ -538,6 +527,7 @@ class SalesReturnsView(ScreenBase, QWidget):
                 if exchange and p["difference_paise"] is not None:
                     lines.append(tr("Replacement items: {amount}", amount=format_rupees(p["replacement_total_paise"])))
                     diff = p["difference_paise"]
+                    self._difference = diff
                     if diff > 0:
                         lines.append(tr("Customer pays: {amount}", amount=format_rupees(diff)))
                         show_pay = True
@@ -546,7 +536,6 @@ class SalesReturnsView(ScreenBase, QWidget):
                         lines.append(tr("Customer gets back: {amount}", amount=format_rupees(-diff)))
                         show_surplus = True
                         refund_possible = self.cmb_surplus.currentData() == "refund"
-                        self._surplus_credit = self.cmb_surplus.currentData() == "store_credit"
                     else:
                         lines.append(tr("Even exchange, nothing to pay."))
                 elif exchange:
@@ -562,9 +551,87 @@ class SalesReturnsView(ScreenBase, QWidget):
         self.txt_pay_amount.setVisible(show_pay)
         self.cmb_surplus.setVisible(show_surplus)
         self.cmb_refund_mode.setEnabled(refund_possible)
-        self.row_credit.setVisible(bool(items) and self._needs_credit_customer())
-        self._paint_credit_customer()
         self.btn_process.setEnabled(bool(self._lines) and not self._busy)
+        self._refresh_credit_row()
+
+    # ------------------------------------------------------------ who gets the store credit
+
+    def _credit_needed(self) -> bool:
+        """True when store credit will be given on a walk-in bill, so a saved customer must be chosen."""
+        if self._bill is None or self._bill["sale"]["customer_id"] is not None or not self._items():
+            return False
+        outcome = self._outcome()
+        if outcome == "store_credit":
+            return True
+        return (outcome == "exchange" and self.cmb_surplus.currentData() == "store_credit"
+                and self._difference is not None and self._difference < 0)
+
+    def _refresh_credit_row(self) -> None:
+        self.row_credit.setVisible(self._credit_needed())
+        if self._credit_customer:
+            self.lbl_credit_customer.setText(tr("Store credit goes to: {name}", name=self._credit_customer[1]))
+            self.btn_pick_customer.setText(tr("Change customer"))
+        else:
+            self.lbl_credit_customer.setText(tr("This was a walk-in bill. Choose the customer who gets the store credit."))
+            self.btn_pick_customer.setText(tr("Choose customer"))
+
+    def set_credit_customer(self, customer_id, name) -> None:
+        self._credit_customer = (customer_id, name)
+        self._refresh_credit_row()
+
+    def choose_credit_customer(self) -> None:
+        dialog = ReturnCustomerDialog(self.conn, self.user_id, self)
+        if dialog.exec() == QDialog.Accepted and dialog.customer_id is not None:
+            self.set_credit_customer(dialog.customer_id, dialog.customer_name)
+
+    # ------------------------------------------------------------ finding a bill by phone, date or part of its number
+
+    def search_bills(self) -> None:
+        self._found = []
+        self.tbl_found.setRowCount(0)
+        self.tbl_found.setVisible(False)
+        self.btn_open_found.setVisible(False)
+
+        def search():
+            return find_sales(
+                self.conn, user_id=self.user_id, text=self.txt_invoice.text(), phone=self.txt_phone.text(),
+                date_from=parse_ui_date(self.txt_from.text(), "The first date") if self.txt_from.text().strip() else None,
+                date_to=parse_ui_date(self.txt_to.text(), "The second date") if self.txt_to.text().strip() else None)
+
+        ok, rows = self._run(search, title=tr("Sales Returns and Exchanges"), quiet_to=self.lbl_status)
+        if not ok:
+            return
+        if not rows:
+            self.lbl_status.setText(tr("No bills found. Check the number, phone or dates."))
+            return
+        self._found = rows
+        for r in rows:
+            add_row(self.tbl_found, [r["invoice_no"], format_ui_date(r["created_at"][:10]), format_rupees(r["total_paise"]),
+                                     tr("Cancelled") if r["status"] != "completed" else ""], right={2})
+        self.tbl_found.setVisible(True)
+        self.btn_open_found.setVisible(True)
+        self.lbl_status.setText(tr("{n} bill(s) found. Double-click one to open it.", n=len(rows)))
+
+    def _open_found(self, row) -> None:
+        bill = self._found[row]
+        self.txt_invoice.setText(bill["invoice_no"])
+        self._credit_customer = None
+        self._cart = []
+        self.lbl_status.setText("")
+        self._load_sale(bill["id"])
+
+    def _found_double_clicked(self, row, _col) -> None:
+        if 0 <= row < len(self._found):
+            self._open_found(row)
+
+    def open_found_bill(self) -> None:
+        selection = self.tbl_found.selectionModel()
+        rows = selection.selectedRows() if selection is not None else []
+        row = rows[0].row() if rows else self.tbl_found.currentRow()
+        if not 0 <= row < len(self._found):
+            self.lbl_status.setText(tr("Select a bill in the list first."))
+            return
+        self._open_found(row)
 
     # ------------------------------------------------------------ the action
 
@@ -585,6 +652,12 @@ class SalesReturnsView(ScreenBase, QWidget):
         for item in items:
             item["reason"] = reason
 
+        needs_customer = self._credit_needed()
+        credit_customer = self._credit_customer if needs_customer else None
+        if needs_customer and credit_customer is None:
+            self._error(title, tr("Choose the customer who gets the store credit."))
+            return
+
         payments = []
         if exchange and self.txt_pay_amount.isVisibleTo(self) and self.txt_pay_amount.text().strip():
             try:
@@ -595,23 +668,17 @@ class SalesReturnsView(ScreenBase, QWidget):
                 return
         surplus = self.cmb_surplus.currentData() if exchange else "refund"
         refund_mode = self.cmb_refund_mode.currentData() if self.cmb_refund_mode.isEnabled() else None
-        credit_customer = None
-        if items and self._needs_credit_customer():
-            if self._credit_customer is None:
-                self._error(title, tr("Choose the customer who gets the store credit."))
-                return
-            credit_customer = self._credit_customer[0]
         kwargs = {
             "outcome": outcome, "reason": reason, "refund_mode": refund_mode, "surplus_outcome": surplus,
             "exchange_cart": list(self._cart) if exchange else None, "payments": payments,
-            "customer_id": credit_customer,
+            "customer_id": credit_customer[0] if credit_customer else None,
         }
 
         if items:
             question = tr("Save this {kind}? Stock and money will change and this cannot be undone.",
                           kind=tr("exchange") if exchange else tr("return"))
-            if credit_customer is not None:
-                question += " " + tr("Any store credit is saved for {name}.", name=self._credit_customer[1] or tr("(no name)"))
+            if credit_customer:
+                question += "\n\n" + tr("Any store credit is saved for {name}.", name=credit_customer[1])
             if not self._ask(title, question):
                 return
 
@@ -624,7 +691,7 @@ class SalesReturnsView(ScreenBase, QWidget):
         if return_id is None:
             self._update_preview()
             return
-        self._after_saved(return_id, title)
+        self._after_saved(return_id, title, credit_customer[1] if credit_customer else None)
 
     def _attempt(self, items, kwargs, title):
         """Call the guarded core action; ask for the owner's approval when the shop's policy blocks it.
@@ -662,8 +729,9 @@ class SalesReturnsView(ScreenBase, QWidget):
                 return None
         return None
 
-    def _after_saved(self, return_id, title) -> None:
-        ok, data = self._run(lambda: rt.get_return(self.conn, return_id), title=title, quiet_to=self.lbl_status)
+    def _after_saved(self, return_id, title, credit_name=None) -> None:
+        self._credit_customer = None  # the choice never carries over to the next return
+        ok, data =  self._run(lambda: rt.get_return(self.conn, return_id), title=title, quiet_to=self.lbl_status)
         self._key = uuid.uuid4().hex
         self.txt_note.clear()
         self.cmb_reason.setCurrentIndex(0)
@@ -679,13 +747,12 @@ class SalesReturnsView(ScreenBase, QWidget):
                 message.append(tr("Refunded: {amount}", amount=format_rupees(r["refund_paise"])))
             if r["store_credit_paise"]:
                 message.append(tr("Added to store credit: {amount}", amount=format_rupees(r["store_credit_paise"])))
-                if self._credit_customer:
-                    message.append(tr("Store credit saved for {name}.", name=self._credit_customer[1] or tr("(no name)")))
+                if credit_name:
+                    message.append(tr("Store credit saved for {name}.", name=credit_name))
             if data["exchange_invoice_no"]:
                 message.append(tr("Replacement bill: {no}", no=data["exchange_invoice_no"]))
             message.append(tr("The returned pieces are waiting for a check before they can be sold again."))
         self._info(title, "\n".join(message))
-        self._credit_customer = None
         self._load_sale(self._sale_id)
         self.reload_pending()
 

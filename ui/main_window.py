@@ -16,13 +16,14 @@ import logging
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from core.permissions import has_permission
 from core.session import SessionLocked
 from ui import screens
 from ui.i18n import N_, load_language_from_settings, tr
+from ui.page_stack import CurrentPageStack
 from ui.widgets import label
 
 log = logging.getLogger(__name__)
@@ -50,9 +51,7 @@ MENU = [
 ROLE_NAMES = {"owner": N_("Owner"), "cashier": N_("Cashier"), "stock": N_("Stock staff"), "accountant": N_("Accountant")}
 
 # Screens not connected to the tested core/ functions yet: what the page tells the user.
-PENDING = {
-    "Reports": N_("The report screens are being connected to the tested reports."),
-}
+PENDING = {}
 
 
 class PlaceholderPage(QWidget):
@@ -101,7 +100,7 @@ class MainWindow(QWidget):
         self.menu.setObjectName("menu")
         self.menu.setFixedWidth(270)
         self.menu.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.pages = QStackedWidget()
+        self.pages = CurrentPageStack()
         self.allowed = []
         for text, needs in MENU:
             if needs is None or any(has_permission(conn, session.user_id, perm) for perm in needs):
@@ -114,7 +113,11 @@ class MainWindow(QWidget):
         body = QHBoxLayout()
         body.setSpacing(0)
         body.addWidget(self.menu)
-        body.addWidget(self.pages, 1)
+        scroll = QScrollArea()  # a page taller than the window scrolls; the window never outgrows the screen
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(self.pages)
+        body.addWidget(scroll, 1)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
