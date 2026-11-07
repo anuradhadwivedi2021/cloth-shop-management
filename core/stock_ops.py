@@ -87,3 +87,27 @@ def list_adjustments(conn, variant_id=None, kind=None) -> list:
         sql += " AND kind = ?"
         args.append(kind)
     return conn.execute(sql + " ORDER BY id DESC", args).fetchall()
+
+
+def list_returned_pending(conn, *, user_id) -> list:
+    """Variants with returned pieces still waiting for the resale check (needs 'adjust_stock')."""
+    require_permission(conn, user_id, "adjust_stock", "see returned items waiting for a check")
+    rows = conn.execute(
+        "SELECT v.id AS variant_id, p.name AS product_name, v.size, v.colour, s.returned_pending_qty AS qty "
+        "FROM variant_stock s JOIN variants v ON v.id = s.variant_id JOIN products p ON p.id = v.product_id "
+        "WHERE s.returned_pending_qty > 0 ORDER BY lower(p.name), v.colour, v.size"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_recent_adjustments(conn, *, user_id, limit=50) -> list:
+    """Latest damaged / missing / returned-item checks with item names, newest first (needs 'adjust_stock')."""
+    require_permission(conn, user_id, "adjust_stock", "see stock adjustments")
+    rows = conn.execute(
+        "SELECT a.id, a.kind, a.qty, a.reason, a.created_at, a.user_id, a.variant_id, "
+        "p.name AS product_name, v.size, v.colour, u.username "
+        "FROM stock_adjustments a JOIN variants v ON v.id = a.variant_id JOIN products p ON p.id = v.product_id "
+        "LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    return [dict(r) for r in rows]

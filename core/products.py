@@ -1,4 +1,4 @@
-"""Products and size x colour variants.
+﻿"""Products and size x colour variants.
 
 Stock is NOT stored here. Stock lives only in stock_movements (see variant_stock view).
 """
@@ -174,27 +174,3 @@ def list_variants_with_stock(conn, product_id):
         (product_id,),
     ).fetchall()
 
-class ProductEngine:
-    """Compatibility wrapper for UI views."""
-    def __init__(self):
-        pass
-
-    # --- Compatibility Wrappers for UI and Tests ---
-
-def get_product_variants(product_id):
-    """Compatibility wrapper for UI / tests without explicit connection."""
-    from db.connection import get_connection
-    with get_connection() as conn:
-        return list_variants_with_stock(conn, product_id)
-
-def search_products_compat(text="", *, active_only=True, limit=50):
-    """Compatibility wrapper for search_products."""
-    from db.connection import get_connection
-    with get_connection() as conn:
-        return search_products(conn, text, active_only=active_only, limit=limit)
-
-def find_variant_by_code_compat(code):
-    """Compatibility wrapper for find_variant_by_code."""
-    from db.connection import get_connection
-    with get_connection() as conn:
-        return find_variant_by_code(conn, code)

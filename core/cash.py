@@ -232,3 +232,46 @@ def get_cash_day(conn, business_date, *, user_id) -> dict:
             changed_after_close=figures["expected_paise"] != row["expected_paise"],
         )
     return result
+
+
+# ---------- reading for the Payments and Cash screen ----------
+
+def _require_read(conn, user_id):
+    if not (has_permission(conn, user_id, "manage_cash") or has_permission(conn, user_id, "view_reports")):
+        raise PermissionDenied("You are not allowed to view the cash register.")
+
+
+def get_open_day(conn, *, user_id):
+    """The date (YYYY-MM-DD) of the cash day that is open right now, or None. Only one day can be open."""
+    _require_read(conn, user_id)
+    row = conn.execute("SELECT business_date FROM cash_days WHERE status = 'open'").fetchone()
+    return row["business_date"] if row else None
+
+
+def suggested_opening(conn, business_date, *, user_id) -> int:
+    """What a new day opens with unless the owner types another amount: the cash counted at the last earlier close."""
+    _require_read(conn, user_id)
+    day = _iso_date(business_date)
+    row = conn.execute(
+        "SELECT counted_paise FROM cash_days WHERE status = 'closed' AND business_date < ? "
+        "ORDER BY business_date DESC LIMIT 1", (day,)).fetchone()
+    return row["counted_paise"] if row else 0
+
+
+def list_cash_days(conn, *, user_id, limit=60) -> list:
+    """The latest cash days, newest first (for looking at earlier closings)."""
+    _require_read(conn, user_id)
+    limit = max(1, min(int(limit), 500))
+    return [dict(r) for r in conn.execute(
+        "SELECT business_date, status, opening_paise, expected_paise, counted_paise, difference_paise, "
+        "difference_reason FROM cash_days ORDER BY business_date DESC LIMIT ?", (limit,))]
+
+
+def list_cash_movements(conn, business_date, *, user_id) -> list:
+    """Cash put in or taken out by hand on one day, in the order it happened (positive = in, negative = out)."""
+    _require_read(conn, user_id)
+    day = _iso_date(business_date)
+    return [dict(r) for r in conn.execute(
+        "SELECT m.id, m.created_at, m.amount_paise, m.reason, u.username AS user FROM cash_movements m "
+        "LEFT JOIN users u ON u.id = m.user_id WHERE m.business_date = ? ORDER BY m.id", (day,))]
+

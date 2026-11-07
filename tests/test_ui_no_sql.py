@@ -12,14 +12,7 @@ UI = Path(__file__).resolve().parent.parent / "ui"
 FORBIDDEN = re.compile(r"\.execute\(|\.executemany\(|\.executescript\(|\.cursor\(|\.commit\(\)|\.rollback\(\)")
 
 # Screens that still need to be re-wired onto core/ (remove each name once it is clean).
-LEGACY = {
-    
-    
-    "expenses_view.py",
-    "purchases_view.py",
-    "settings_view.py",
-    "stock_count_view.py",
-}
+LEGACY = set()
 
 
 def _offending(path: Path) -> list:

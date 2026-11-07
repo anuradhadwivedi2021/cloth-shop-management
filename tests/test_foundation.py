@@ -24,8 +24,11 @@ _APP = QApplication.instance() or QApplication([])
 
 
 def _dispose(widget):
-    widget.setParent(None)
-    widget.deleteLater()
+    try:
+        widget.setParent(None)
+        widget.deleteLater()
+    except RuntimeError:  # an earlier cleanup already deleted it
+        return
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     _APP.processEvents()
 

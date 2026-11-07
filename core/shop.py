@@ -18,6 +18,7 @@ from core import auth, keystore
 from core.audit import log_event
 from core.permissions import require_permission
 from core.session import Session, auto_lock_minutes
+from core.tax import ensure_default_tax_rules
 from db.connection import open_db, transaction
 
 DB_FILE = "shop.db"
@@ -49,6 +50,7 @@ def setup_new_shop(folder, username, password, *, pin=None, full_name=None):
     conn = open_db(db_path, db_key)
     try:
         auth.setup_first_owner(conn, username, password, pin=pin, full_name=full_name)
+        ensure_default_tax_rules(conn)  # the GST rate table must never be empty (the owner can change it later)
         user = auth.authenticate(conn, username, password)
     except Exception:
         conn.close()
@@ -71,6 +73,7 @@ def open_shop(folder, username, password):
     conn = open_db(db_path, db_key)
     try:
         user = auth.authenticate(conn, username, password)
+        ensure_default_tax_rules(conn)  # shops made before this fix get the rate table once (only if it is empty)
     except Exception:
         conn.close()
         raise

@@ -59,6 +59,28 @@ def current_stock(
     The reorder level is the variant's own level if set, otherwise the product's.
     """
     require_view(conn, user_id)
+    return _stock_rows(
+        conn, product_id=product_id, category=category, brand=brand, search=search,
+        status=status, include_inactive=include_inactive,
+    )
+
+
+def stock_overview(
+    conn, *, user_id, product_id=None, category=None, brand=None, search=None,
+    status=None, include_inactive=False,
+) -> list:
+    """Same rows as current_stock, for anyone who may see products and stock ('view_products').
+
+    Shows quantities only: no cost and no stock value, so it is safe for cashiers and stock staff.
+    """
+    require_permission(conn, user_id, "view_products", "see products and stock")
+    return _stock_rows(
+        conn, product_id=product_id, category=category, brand=brand, search=search,
+        status=status, include_inactive=include_inactive,
+    )
+
+
+def _stock_rows(conn, *, product_id, category, brand, search, status, include_inactive) -> list:
     if status not in (None, "ok", "low", "out"):
         raise ValueError("Status must be ok, low or out.")
     sql = (

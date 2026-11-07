@@ -119,7 +119,16 @@ def find_duplicate_purchase(conn, supplier_id, invoice_no, invoice_date):
     ).fetchall()
 
 
-def create_draft_purchase(
+def create_draft_purchase(conn, *args, **kwargs):
+    """Save a purchase as a DRAFT. Stock does not change. Returns the purchase id.
+
+    Opens its own transaction. See `create_draft_purchase_in_transaction` for the arguments.
+    """
+    with transaction(conn):
+        return create_draft_purchase_in_transaction(conn, *args, **kwargs)
+
+
+def create_draft_purchase_in_transaction(
     conn,
     supplier_id,
     invoice_no,
@@ -133,7 +142,7 @@ def create_draft_purchase(
     notes=None,
     created_by=None,
 ):
-    """Save a purchase as a DRAFT. Stock does not change. Returns the purchase id."""
+    """Same as `create_draft_purchase`, for a caller that already opened a transaction."""
     invoice_no = (invoice_no or "").strip()
     if not invoice_no:
         raise ValueError("Supplier invoice number is required.")
@@ -143,36 +152,35 @@ def create_draft_purchase(
     if not 0 <= paid_paise <= calc["total_paise"]:
         raise ValueError("Amount paid must be between zero and the invoice total.")
 
-    with transaction(conn):
-        if conn.execute("SELECT 1 FROM suppliers WHERE id = ?", (supplier_id,)).fetchone() is None:
-            raise ValueError("Supplier not found.")
-        for line in calc["lines"]:
-            if conn.execute("SELECT 1 FROM variants WHERE id = ?", (line["variant_id"],)).fetchone() is None:
-                raise ValueError("A product variant on this invoice was not found.")
+    if conn.execute("SELECT 1 FROM suppliers WHERE id = ?", (supplier_id,)).fetchone() is None:
+        raise ValueError("Supplier not found.")
+    for line in calc["lines"]:
+        if conn.execute("SELECT 1 FROM variants WHERE id = ?", (line["variant_id"],)).fetchone() is None:
+            raise ValueError("A product variant on this invoice was not found.")
 
-        cur = conn.execute(
-            "INSERT INTO purchases(supplier_id, invoice_no, invoice_date, received_date, fin_year, status, "
-            "subtotal_paise, discount_paise, tax_paise, freight_paise, round_off_paise, total_paise, "
-            "paid_paise, due_paise, notes, created_by) "
-            "VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?)",
+    cur = conn.execute(
+        "INSERT INTO purchases(supplier_id, invoice_no, invoice_date, received_date, fin_year, status, "
+        "subtotal_paise, discount_paise, tax_paise, freight_paise, round_off_paise, total_paise, "
+        "paid_paise, due_paise, notes, created_by) "
+        "VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?)",
+        (
+            supplier_id, invoice_no, invoice_date, received_date, fin_year,
+            calc["subtotal_paise"], calc["discount_paise"], calc["tax_paise"],
+            calc["freight_paise"], calc["round_off_paise"], calc["total_paise"],
+            paid_paise, calc["total_paise"] - paid_paise, notes, created_by,
+        ),
+    )
+    purchase_id = cur.lastrowid
+    for line in calc["lines"]:
+        conn.execute(
+            "INSERT INTO purchase_lines(purchase_id, variant_id, qty, unit_cost_paise, "
+            "tax_rate_percent, tax_paise, line_total_paise) VALUES (?,?,?,?,?,?,?)",
             (
-                supplier_id, invoice_no, invoice_date, received_date, fin_year,
-                calc["subtotal_paise"], calc["discount_paise"], calc["tax_paise"],
-                calc["freight_paise"], calc["round_off_paise"], calc["total_paise"],
-                paid_paise, calc["total_paise"] - paid_paise, notes, created_by,
+                purchase_id, line["variant_id"], line["qty"], line["unit_cost_paise"],
+                line["tax_rate_percent"], line["tax_paise"], line["line_total_paise"],
             ),
         )
-        purchase_id = cur.lastrowid
-        for line in calc["lines"]:
-            conn.execute(
-                "INSERT INTO purchase_lines(purchase_id, variant_id, qty, unit_cost_paise, "
-                "tax_rate_percent, tax_paise, line_total_paise) VALUES (?,?,?,?,?,?,?)",
-                (
-                    purchase_id, line["variant_id"], line["qty"], line["unit_cost_paise"],
-                    line["tax_rate_percent"], line["tax_paise"], line["line_total_paise"],
-                ),
-            )
-        return purchase_id
+    return purchase_id
 
 
 def confirm_purchase(conn, purchase_id, *, user_id=None, payment_mode="cash", received_date=None):
@@ -182,59 +190,71 @@ def confirm_purchase(conn, purchase_id, *, user_id=None, payment_mode="cash", re
     Confirming a purchase that is not a draft is refused, so double-clicks cannot add stock twice.
     """
     with transaction(conn):
-        purchase = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
-        if purchase is None:
-            raise ValueError("Purchase not found.")
-        if purchase["status"] != "draft":
-            raise PurchaseStateError(
-                f"This purchase is already {purchase['status']} and cannot be confirmed again."
-            )
-        lines = conn.execute(
-            "SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY id", (purchase_id,)
-        ).fetchall()
-        if not lines:
-            raise ValueError("This purchase has no lines.")
-
-        _, voucher_no = next_number(conn, "PUR", purchase["fin_year"], "PUR")
-
-        for line in lines:
-            add_movement(
-                conn,
-                line["variant_id"],
-                line["qty"],
-                "purchase received",
-                doc_type="purchase",
-                doc_id=purchase_id,
-                user_id=user_id,
-            )
-
-        if purchase["paid_paise"] > 0:
-            conn.execute(
-                "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
-                "VALUES ('purchase', ?, ?, ?, ?, ?)",
-                (purchase_id, payment_mode, purchase["paid_paise"], purchase["invoice_no"], user_id),
-            )
-
-        conn.execute(
-            "UPDATE purchases SET status = 'confirmed', voucher_no = ?, "
-            "received_date = COALESCE(?, received_date, ?), confirmed_at = datetime('now','localtime') "
-            "WHERE id = ?",
-            (voucher_no, received_date, date.today().isoformat(), purchase_id),
+        return confirm_purchase_in_transaction(
+            conn, purchase_id, user_id=user_id, payment_mode=payment_mode, received_date=received_date
         )
-        return voucher_no
+
+
+def confirm_purchase_in_transaction(conn, purchase_id, *, user_id=None, payment_mode="cash", received_date=None):
+    """Same as `confirm_purchase`, for a caller that already opened a transaction."""
+    purchase = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    if purchase is None:
+        raise ValueError("Purchase not found.")
+    if purchase["status"] != "draft":
+        raise PurchaseStateError(
+            f"This purchase is already {purchase['status']} and cannot be confirmed again."
+        )
+    lines = conn.execute(
+        "SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY id", (purchase_id,)
+    ).fetchall()
+    if not lines:
+        raise ValueError("This purchase has no lines.")
+
+    _, voucher_no = next_number(conn, "PUR", purchase["fin_year"], "PUR")
+
+    for line in lines:
+        add_movement(
+            conn,
+            line["variant_id"],
+            line["qty"],
+            "purchase received",
+            doc_type="purchase",
+            doc_id=purchase_id,
+            user_id=user_id,
+        )
+
+    if purchase["paid_paise"] > 0:
+        conn.execute(
+            "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
+            "VALUES ('purchase', ?, ?, ?, ?, ?)",
+            (purchase_id, payment_mode, purchase["paid_paise"], purchase["invoice_no"], user_id),
+        )
+
+    conn.execute(
+        "UPDATE purchases SET status = 'confirmed', voucher_no = ?, "
+        "received_date = COALESCE(?, received_date, ?), confirmed_at = datetime('now','localtime') "
+        "WHERE id = ?",
+        (voucher_no, received_date, date.today().isoformat(), purchase_id),
+    )
+    return voucher_no
 
 
 def cancel_draft_purchase(conn, purchase_id):
     """Cancel a DRAFT purchase. Confirmed purchases need a purchase return instead."""
     with transaction(conn):
-        purchase = conn.execute("SELECT status FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
-        if purchase is None:
-            raise ValueError("Purchase not found.")
-        if purchase["status"] != "draft":
-            raise PurchaseStateError(
-                f"Only a draft can be cancelled; this purchase is {purchase['status']}."
-            )
-        conn.execute("UPDATE purchases SET status = 'cancelled' WHERE id = ?", (purchase_id,))
+        cancel_draft_purchase_in_transaction(conn, purchase_id)
+
+
+def cancel_draft_purchase_in_transaction(conn, purchase_id):
+    """Same as `cancel_draft_purchase`, for a caller that already opened a transaction."""
+    purchase = conn.execute("SELECT status FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    if purchase is None:
+        raise ValueError("Purchase not found.")
+    if purchase["status"] != "draft":
+        raise PurchaseStateError(
+            f"Only a draft can be cancelled; this purchase is {purchase['status']}."
+        )
+    conn.execute("UPDATE purchases SET status = 'cancelled' WHERE id = ?", (purchase_id,))
 
 
 def get_purchase(conn, purchase_id):
@@ -246,3 +266,6 @@ def get_purchase(conn, purchase_id):
         "SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY id", (purchase_id,)
     ).fetchall()
     return purchase, lines
+
+
+    

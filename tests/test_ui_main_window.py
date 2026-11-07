@@ -30,8 +30,11 @@ _APP = QApplication.instance() or QApplication([])  # kept alive for the whole r
 
 
 def _dispose(widget):
-    widget.setParent(None)
-    widget.deleteLater()
+    try:
+        widget.setParent(None)
+        widget.deleteLater()
+    except RuntimeError:  # an earlier cleanup already deleted it
+        return
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     _APP.processEvents()
 
@@ -188,3 +191,6 @@ def test_dashboard_shows_backup_age_to_the_owner(s):
     dash.refresh()
     assert dash.backup_value.text() == "0 day(s) ago"
     _close(conn, window)
+
+
+

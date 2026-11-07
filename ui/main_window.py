@@ -51,17 +51,7 @@ ROLE_NAMES = {"owner": N_("Owner"), "cashier": N_("Cashier"), "stock": N_("Stock
 
 # Screens not connected to the tested core/ functions yet: what the page tells the user.
 PENDING = {
-    "Products": N_("Product and size/colour matrix entry is being connected to the tested product functions."),
-    "Stock and Variants": N_("The stock-by-size-and-colour view is being connected to the stock reports."),
-    "Purchases": N_("Receiving stock (draft, then confirm) is being connected to the tested purchase functions."),
-    "Customers": N_("Customer profiles, privacy consent and credit dues are being connected."),
-    "Sales Returns and Exchanges": N_("Returns and exchanges are being connected to the tested return functions."),
-    "Purchase Returns": N_("Returns to suppliers are being connected to the tested functions."),
-    "Stock Count and Adjustments": N_("Physical stock count and adjustments are being connected to the tested functions."),
-    "Payments and Cash": N_("The cash register and day closing are being connected to the tested functions."),
-    "Expenses": N_("Expenses are being connected to the tested expense functions."),
     "Reports": N_("The report screens are being connected to the tested reports."),
-    "Settings": N_("Settings are being connected to the checked settings functions."),
 }
 
 
@@ -161,6 +151,22 @@ class MainWindow(QWidget):
         if text == "New Sale / Billing":
             from ui.billing_counter_view import BillingCounterView
             return BillingCounterView(conn, session, self.folder)
+
+        if text == "Stock Count and Adjustments":
+            from ui.stock_count_view import StockCountView
+            return StockCountView(conn, session)
+
+        if text == "Sales Returns and Exchanges":
+            from ui.sales_returns_view import SalesReturnsView
+            return SalesReturnsView(conn, session)
+
+        if text == "Purchase Returns":
+            from ui.purchase_returns_view import PurchaseReturnsView
+            return PurchaseReturnsView(conn, session)
+
+        if text == "Purchases":
+            from ui.purchases_view import PurchasesView
+            return PurchasesView(conn, session)
 
         if text == "Backup and Restore":
             from ui.backup_view import BackupRestoreView

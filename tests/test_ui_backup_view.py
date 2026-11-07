@@ -29,8 +29,11 @@ _APP = QApplication.instance() or QApplication([])  # kept alive for the whole r
 
 def _dispose(widget):
     """Really delete a widget now (deleteLater alone can leave it alive until exit and crash Qt)."""
-    widget.setParent(None)
-    widget.deleteLater()
+    try:
+        widget.setParent(None)
+        widget.deleteLater()
+    except RuntimeError:  # an earlier cleanup already deleted it
+        return
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     _APP.processEvents()
 
@@ -208,8 +211,10 @@ def test_date_format_is_dd_mm_yyyy_24_hour():
 
 
 def test_the_fake_file_copy_backup_is_gone_from_the_dashboard():
-    dashboard = (ROOT / "ui" / "dashboard_reports_view.py").read_text(encoding="utf-8")
-    engine = (ROOT / "core" / "dashboard_backup_engine.py").read_text(encoding="utf-8")
+    def _read(path):  # the old fake files were removed; a missing file cannot hold the fake backup
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    dashboard = _read(ROOT / "ui" / "dashboard_reports_view.py")
+    engine = _read(ROOT / "core" / "dashboard_backup_engine.py")
     assert "create_encrypted_backup" not in dashboard + engine
     assert "shutil.copy" not in engine
 

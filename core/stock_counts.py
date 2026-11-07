@@ -203,3 +203,34 @@ def cancel_count(conn, count_id, *, user_id, reason) -> None:
             conn, "stock_count_cancelled", user_id=user_id, entity="stock_count", entity_id=count_id,
             after={"count_no": count["count_no"], "reason": reason.strip()},
         )
+
+
+# ---------- lists for the screen (read only) ----------
+
+def list_counts(conn, *, user_id, status=None, limit=50) -> list:
+    """Stock counts, newest first, with how many of their lines have been counted (needs 'adjust_stock')."""
+    require_permission(conn, user_id, "adjust_stock", "see stock counts")
+    if status not in (None, "open", "applied", "cancelled"):
+        raise ValueError("Status must be open, applied or cancelled.")
+    sql = (
+        "SELECT c.*, (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.id) AS line_count, "
+        "(SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.id AND l.counted_qty IS NOT NULL) "
+        "AS counted_count FROM stock_counts c"
+    )
+    args = []
+    if status:
+        sql += " WHERE c.status = ?"
+        args.append(status)
+    sql += " ORDER BY c.id DESC LIMIT ?"
+    args.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, args)]
+
+
+def count_categories(conn, *, user_id) -> list:
+    """Product categories that have active variants, for choosing what to count (needs 'adjust_stock')."""
+    require_permission(conn, user_id, "adjust_stock", "start a stock count")
+    rows = conn.execute(
+        "SELECT DISTINCT trim(p.category) AS category FROM products p JOIN variants v ON v.product_id = p.id "
+        "WHERE v.is_active = 1 AND p.category IS NOT NULL AND trim(p.category) <> '' ORDER BY lower(trim(p.category))"
+    ).fetchall()
+    return [r["category"] for r in rows]

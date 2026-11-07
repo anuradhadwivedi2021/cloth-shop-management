@@ -419,20 +419,27 @@ def discover_migrations(directory=None, package="db"):
     (for example db/deferred/) are never picked up.
     """
     import importlib
+    import pkgutil
     import re
     from pathlib import Path
 
-    folder = Path(directory) if directory else Path(__file__).resolve().parent
+    if directory:
+        names = sorted(path.stem for path in Path(directory).glob("migration_*.py"))
+    else:
+        # Ask the package itself instead of looking for .py files on disk: inside the packaged .exe the
+        # source files are not on disk, but the modules are still part of the package.
+        names = sorted(m.name for m in pkgutil.iter_modules(importlib.import_module(package).__path__)
+                       if m.name.startswith("migration_"))
     found = {}
-    for path in sorted(folder.glob("migration_*.py")):
-        match = re.fullmatch(r"migration_(\d+)\.py", path.name)
+    for name in names:
+        match = re.fullmatch(r"migration_(\d+)", name)
         if not match:
             continue
         number = int(match.group(1))
-        module = importlib.import_module(f"{package}.{path.stem}")
+        module = importlib.import_module(f"{package}.{name}")
         script = getattr(module, f"MIGRATION_{number}", None)
         if not isinstance(script, str):
-            raise RuntimeError(f"{path.name} must define MIGRATION_{number} as a SQL string.")
+            raise RuntimeError(f"{name}.py must define MIGRATION_{number} as a SQL string.")
         found[number] = script
     return found
 

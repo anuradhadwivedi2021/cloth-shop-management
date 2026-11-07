@@ -29,7 +29,6 @@ log = logging.getLogger("clothshop")
 FOLDER_SETTING = "backup_folder"
 _FMT = "%Y-%m-%d %H:%M:%S"
 
-
 def pretty_time(stamp) -> str:
     """'2026-11-03 18:30:05' -> '03/11/2026 18:30:05' (DD/MM/YYYY, 24-hour clock)."""
     try:

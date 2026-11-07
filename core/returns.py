@@ -415,3 +415,59 @@ def process_return(
             },
         )
         return return_id
+
+
+# ---------- preview (nothing is saved) ----------
+
+def preview_return(conn, sale_id, items, *, exchange_cart=None, on_date=None) -> dict:
+    """What a return or exchange would come to, WITHOUT saving anything.
+
+    Uses the same rules as `process_return` (value of the original bill line, running rupee rounding,
+    credit sale dues first), so the screen can show the customer the exact amounts before saving.
+    Returns:
+      returned_value_paise   what the returned pieces are worth (whole rupees)
+      due_adjusted_paise     part of it that only reduces what the customer still owes
+      credit_paise           money value available to refund / pay for the exchange
+      replacement_total_paise  total of the replacement items (None when no exchange_cart)
+      difference_paise       replacement - credit: above 0 the customer pays, below 0 the shop gives back
+    Raises ValueError (message safe to show) when the items are wrong.
+    """
+    sale = conn.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    if sale is None:
+        raise ValueError("Bill not found.")
+    if sale["status"] != "completed":
+        raise ValueError("A cancelled bill cannot be returned.")
+    if not isinstance(items, (list, tuple)) or not items:
+        raise ValueError("Select at least one item to return.")
+    seen, lines_total = set(), 0
+    for item in items:
+        line_id, qty = item.get("sale_line_id"), item.get("qty")
+        if line_id in seen:
+            raise ValueError("The same bill line is listed twice. Combine the quantities.")
+        seen.add(line_id)
+        if not isinstance(qty, int) or qty <= 0:
+            raise ValueError("Return quantity must be a whole number greater than zero.")
+        row = conn.execute("SELECT * FROM sale_lines WHERE id = ? AND sale_id = ?", (line_id, sale_id)).fetchone()
+        if row is None:
+            raise ValueError("A selected item is not on this bill.")
+        done = _returned_qty(conn, row["id"])
+        if qty > row["qty"] - done:
+            raise ValueError(f"Only {row['qty'] - done} of {row['product_name']} can still be returned.")
+        lines_total += _share(row["line_total_paise"], row["qty"], done + qty) - _share(row["line_total_paise"], row["qty"], done)
+    prior = _prior_lines_total(conn, sale_id)
+    total = _round_rupee(prior + lines_total) - _round_rupee(prior)
+    due_adjusted = min(total, _due_remaining(conn, sale))
+    credit = total - due_adjusted
+    result = {
+        "returned_value_paise": total, "due_adjusted_paise": due_adjusted, "credit_paise": credit,
+        "replacement_total_paise": None, "difference_paise": None,
+    }
+    if exchange_cart:
+        from core.bill_preview import preview_bill  # imported here: bill_preview does not know about returns
+        bill = preview_bill(
+            conn, list(exchange_cart), mode=sale["tax_mode"], intra_state=bool(sale["intra_state"]),
+            prices_include_tax=bool(sale["prices_include_tax"]), on_date=_on(on_date),
+        )
+        result["replacement_total_paise"] = bill["total_paise"]
+        result["difference_paise"] = bill["total_paise"] - credit
+    return result
