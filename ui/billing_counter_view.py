@@ -20,7 +20,7 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSpinBox, QTableWidget,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import bill_preview as bp
+from core import wallet as wallet_core
 from core.auth import AuthError
 from core.customers import get_customer, search_customers
 from core.guarded import sell
@@ -42,6 +43,7 @@ from core.session import SessionLocked
 from core.settings import get_bool
 from core.shop_settings import billing_problems, get_shop_profile, place_of_supply
 from core.stock import InsufficientStockError
+from core.upi_qr import qr_for_bill
 from ui import print_service
 from ui.i18n import N_, tr
 from ui.widgets import label
@@ -244,11 +246,15 @@ class PaymentDialog(QDialog):
 
     ROWS = 3
 
-    def __init__(self, total_paise, on_save, *, credit_ok=False, has_customer=False, modes=ACCEPTED_PAYMENT_MODES, parent=None):
+    def __init__(self, total_paise, on_save, *, credit_ok=False, has_customer=False, modes=ACCEPTED_PAYMENT_MODES, upi=None,
+                 wallet=None, voucher_balance=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("Payment"))
         self.total, self._on_save, self._busy = total_paise, on_save, False
         self._credit_ok, self._has_customer = credit_ok, has_customer
+        self._upi = upi            # BIL-13: {'upi_id', 'png', ...} or None when the shop has no UPI id
+        self._wallet = wallet      # CUS-05/06: {'points', 'point_value_paise', 'store_credit_paise', ...} or None
+        self._voucher_balance = voucher_balance      # code -> the amount that voucher can pay now, or None
         grid = QGridLayout()
         self.rows = []
         for i in range(self.ROWS):
@@ -266,6 +272,26 @@ class PaymentDialog(QDialog):
             grid.addWidget(amount, i, 1)
             grid.addWidget(ref, i, 2)
             self.rows.append((combo, amount, ref))
+        self.pts_edit, self.credit_edit, self.voucher_edit = QLineEdit(), QLineEdit(), QLineEdit()
+        wallet_box = QGridLayout()
+        self.wallet_widgets = []
+        if wallet is not None:
+            if wallet.get("loyalty_enabled") and wallet.get("points", 0) > 0:
+                self.pts_edit.setPlaceholderText(tr("Points to use (you have {n})", n=wallet["points"]))
+                wallet_box.addWidget(self.pts_edit, 0, 0)
+                self.wallet_widgets.append(self.pts_edit)
+            if wallet.get("store_credit_paise", 0) > 0:
+                self.credit_edit.setPlaceholderText(tr("Store credit to use (Rs, you have {amount})",
+                                                       amount=format_rupees(wallet["store_credit_paise"])))
+                wallet_box.addWidget(self.credit_edit, 0, 1)
+                self.wallet_widgets.append(self.credit_edit)
+        if voucher_balance is not None:
+            self.voucher_edit.setPlaceholderText(tr("Gift voucher code"))
+            wallet_box.addWidget(self.voucher_edit, 1, 0, 1, 2)
+            self.wallet_widgets.append(self.voucher_edit)
+        for edit in self.wallet_widgets:
+            edit.textChanged.connect(self._wallet_changed)
+            edit.returnPressed.connect(self.submit)
         self.total_label = label(tr("Bill total: {amount}", amount=format_rupees(total_paise)), "title")
         self.balance = label("")
         self.error = label("", "error")
@@ -274,20 +300,48 @@ class PaymentDialog(QDialog):
         self.save_btn.clicked.connect(self.submit)
         cancel = QPushButton(tr("Cancel"))
         cancel.clicked.connect(self.reject)
+        self.upi_btn = QPushButton(tr("Show UPI QR"))
+        self.upi_btn.setVisible(upi is not None)
+        self.upi_btn.clicked.connect(self.toggle_upi)
+        self.upi_label = QLabel()
+        self.upi_label.setAlignment(Qt.AlignCenter)
+        self.upi_label.setVisible(False)
+        self.upi_note = label("", "hint")
+        self.upi_note.setVisible(False)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.upi_btn)
         buttons.addStretch(1)
         buttons.addWidget(cancel)
         buttons.addWidget(self.save_btn)
         col = QVBoxLayout(self)
         col.addWidget(self.total_label)
+        if self.wallet_widgets:
+            col.addLayout(wallet_box)
         col.addLayout(grid)
         col.addWidget(self.balance)
+        col.addWidget(self.upi_label)
+        col.addWidget(self.upi_note)
         col.addWidget(self.error)
         col.addLayout(buttons)
         self.resize(640, 300)
         self._update()
         self.rows[0][1].setFocus()
         self.rows[0][1].selectAll()
+
+    def toggle_upi(self):
+        """Show or hide the shop's UPI QR for this bill. The app cannot know if the customer paid: the cashier
+        confirms the money arrived, then types it in as a UPI payment above."""
+        show = not self.upi_label.isVisible()
+        if show and self._upi:
+            pixmap = QPixmap()
+            pixmap.loadFromData(self._upi["png"], "PNG")
+            self.upi_label.setPixmap(pixmap.scaled(260, 260, Qt.KeepAspectRatio, Qt.FastTransformation))
+            self.upi_note.setText(tr("Customer scans and pays {amount} to {upi}. When the money has arrived, enter it "
+                                     "above as a UPI payment.", amount=format_rupees(self.total), upi=self._upi["upi_id"]))
+        self.upi_label.setVisible(show)
+        self.upi_note.setVisible(show)
+        self.upi_btn.setText(tr("Hide UPI QR") if show else tr("Show UPI QR"))
+        self.adjustSize()
 
     def payments(self) -> list:
         result = []
@@ -301,9 +355,47 @@ class PaymentDialog(QDialog):
                 })
         return result
 
+    def tenders(self) -> list:
+        """Points, store credit and a gift voucher the customer wants to pay with (checked again by the core)."""
+        result = []
+        pts = self.pts_edit.text().strip()
+        if pts:
+            if not pts.isdigit() or int(pts) <= 0:
+                raise ValueError(tr("Points must be a whole number."))
+            result.append({"kind": "loyalty", "points": int(pts)})
+        credit = self.credit_edit.text().strip()
+        if credit:
+            result.append({"kind": "store_credit", "amount_paise": parse_rupees(credit, allow_zero=False)})
+        code = self.voucher_edit.text().strip()
+        if code:
+            result.append({"kind": "voucher", "code": code})
+        return result
+
+    def _wallet_paise(self) -> int:
+        """What the typed points, credit and voucher are worth (for the figures shown; never more than the bill)."""
+        try:
+            tenders = self.tenders()
+        except ValueError:
+            return 0
+        total = 0
+        for t in tenders:
+            if t["kind"] == "loyalty":
+                total += t["points"] * self._wallet["point_value_paise"]
+            elif t["kind"] == "store_credit":
+                total += t["amount_paise"]
+            elif self._voucher_balance is not None:
+                total += self._voucher_balance(t["code"]) or 0
+        return min(total, self.total)
+
+    def _wallet_changed(self, *_):
+        """Offer the rest of the bill as the money to collect, unless the cashier already split it."""
+        if all(not self.rows[i][1].text().strip() for i in range(1, self.ROWS)):
+            self.rows[0][1].setText(_plain(self.total - self._wallet_paise()))
+        self._update()
+
     def _update(self):
         try:
-            tendered = sum(p["amount_paise"] for p in self.payments())
+            tendered = sum(p["amount_paise"] for p in self.payments()) + (self._wallet_paise() if self._wallet else 0)
         except ValueError as exc:
             self.balance.setText(str(exc))
             return
@@ -323,6 +415,7 @@ class PaymentDialog(QDialog):
         self.save_btn.setEnabled(False)
         self.error.setText("")
         try:
+            self.tenders()           # a typo in the points or store credit box is reported before anything is saved
             ok, message = self._on_save(self.payments())
         except ValueError as exc:
             ok, message = False, str(exc)
@@ -916,21 +1009,48 @@ class BillingCounterView(QWidget):
         if problems:
             self._say(" ".join(problems), "error")
             return
+        holder = []
+        wallet = {"points": 0, "store_credit_paise": 0, "loyalty_enabled": False,
+                  "point_value_paise": wallet_core.loyalty_settings(self.conn)["point_value_paise"]}
+        if self.customer_id is not None:
+            try:
+                wallet.update(wallet_core.balances(self.conn, self.customer_id))
+            except Exception:
+                log.exception("Billing counter: could not read the customer's points and credit")
         dlg = PaymentDialog(
-            self._preview["total_paise"], self.save_bill,
+            self._preview["total_paise"], lambda payments: self.save_bill(payments, holder[0].tenders()),
             credit_ok=get_bool(self.conn, "credit_sales_enabled"), has_customer=self.customer_id is not None,
-            modes=enabled_payment_modes(self.conn), parent=self,
+            modes=enabled_payment_modes(self.conn), upi=self._upi_for(self._preview["total_paise"]),
+            wallet=wallet, voucher_balance=self._voucher_amount, parent=self,
         )
+        holder.append(dlg)
         dlg.exec()
         self._focus_scan()
 
-    def save_bill(self, payments) -> tuple:
+    def _voucher_amount(self, code):
+        """What a gift voucher can pay now (0 when the code is unknown, used up, expired or cancelled)."""
+        try:
+            view = wallet_core.get_voucher(self.conn, code)
+        except ValueError:
+            return 0
+        return view["balance_paise"] if view["usable"] else 0
+
+    def _upi_for(self, total_paise):
+        """The UPI QR for this total, or None when it is switched off or the shop has no valid UPI id."""
+        if not get_bool(self.conn, "show_upi_qr_on_bill", True) or total_paise <= 0:
+            return None
+        try:
+            return qr_for_bill(get_shop_profile(self.conn), total_paise)
+        except ValueError:
+            return None
+
+    def save_bill(self, payments, tenders=None) -> tuple:
         """Save the current bill. Returns (ok, message). 'Saved' is reported only after sell() succeeded."""
         if self._saving:
             return False, tr("Saving is already in progress.")
         self._saving = True
         try:
-            return self._save_bill(payments)
+            return self._save_bill(payments, tenders)
         finally:
             self._saving = False
 
@@ -938,7 +1058,7 @@ class BillingCounterView(QWidget):
         self._say(message, "error")
         return False, message
 
-    def _save_bill(self, payments) -> tuple:
+    def _save_bill(self, payments, tenders=None) -> tuple:
         try:
             self.session.touch()
         except SessionLocked:
@@ -969,6 +1089,7 @@ class BillingCounterView(QWidget):
                 customer_id=self.customer_id, mode=self._bill_mode(),
                 intra_state=self._place["intra_state"] if self._bill_mode() == "regular" else True,
                 bill_discount_paise=self._bill_discount, idempotency_key=self._attempt_key, held_slot=self.held_slot,
+                tenders=tenders or None,
             )
         except (ValueError, AuthError, InsufficientStockError) as exc:  # PermissionDenied is a ValueError
             return self._fail(str(exc))

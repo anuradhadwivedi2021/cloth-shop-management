@@ -16,6 +16,7 @@ from core.money import format_rupees  # noqa: E402
 from core.products import create_product, generate_variants  # noqa: E402
 from core.purchases import create_supplier  # noqa: E402
 from core.stock import get_stock  # noqa: E402
+from ui import print_service  # noqa: E402
 from ui.purchase_returns_view import PurchaseReturnsView  # noqa: E402
 from ui.purchases_view import GridDialog, PurchasesView, ReviewDialog  # noqa: E402
 
@@ -89,7 +90,11 @@ def test_a_bad_amount_is_explained_and_nothing_is_worked_out(s):
     conn.close()
 
 
-def test_confirm_adds_stock_and_a_failed_label_print_is_never_called_printed(s):
+def test_confirm_adds_stock_and_a_failed_label_print_is_never_called_printed(s, monkeypatch):
+    def no_printer(job):
+        raise RuntimeError("no printer")
+
+    monkeypatch.setattr(print_service, "_print_labels", no_printer)   # a test machine has no label printer
     conn, view, shown = _open(s)
     _fill_invoice(view, s)
     view._open_review = lambda summary, head: "confirm"
@@ -97,7 +102,7 @@ def test_confirm_adds_stock_and_a_failed_label_print_is_never_called_printed(s):
     assert _stock(conn, s) == [4, 0, 0, 6]
     assert any("Purchase confirmed" in i and "PUR/" in i for i in shown.infos)
     assert any("Print barcode labels for the 10 pieces" in a for a in shown.asks)
-    assert any("not connected" in e for e in shown.errors)          # print_labels is still a stub
+    assert any("No printer was found" in e for e in shown.errors)   # the purchase is saved; only the labels failed
     assert not any("printed" in i.lower() for i in shown.infos)
     assert view.tbl_lines.rowCount() == 0 and view.txt_invoice.text() == ""  # form cleared after a real save
     conn.close()

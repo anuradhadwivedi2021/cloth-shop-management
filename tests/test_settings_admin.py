@@ -169,7 +169,7 @@ def test_a_cashier_cannot_change_rates(s):
 def test_every_series_is_listed_with_its_next_number(s):
     rows = {r["series"]: r for r in sa.list_series(s.conn)}
     fy = financial_year(TODAY)
-    assert len(rows) == 9 and rows["INV"]["next_number"] == f"INV/{fy}/000001" and rows["INV"]["last_number"] == 0
+    assert len(rows) == 10 and rows["INV"]["next_number"] == f"INV/{fy}/000001" and rows["INV"]["last_number"] == 0
 
 
 def test_a_new_prefix_is_used_at_once_when_nothing_was_issued_this_year(s):

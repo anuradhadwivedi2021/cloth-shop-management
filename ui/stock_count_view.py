@@ -34,6 +34,7 @@ from core.permissions import has_permission
 from core.purchase_service import format_ui_date
 from ui.i18n import N_, tr
 from ui.sales_returns_view import ReplacementDialog
+from ui.stock_holds_panel import StockHoldsPanel
 from ui.screen_helpers import ScreenBase, add_row, make_table
 from ui.widgets import form, label
 
@@ -167,6 +168,8 @@ class StockCountView(ScreenBase, QWidget):
         ])
         oc.addWidget(self.tbl_adjustments, 1)
         self.tabs.addTab(other, tr("Damaged or missing"))
+        self.holds_panel = StockHoldsPanel(conn, session)
+        self.tabs.addTab(self.holds_panel, tr("Trial and reserved"))
 
         outer = QVBoxLayout(self)
         outer.addWidget(label(tr("Stock Count and Adjustments"), "title"))

@@ -17,6 +17,7 @@ Needs the "manage_expenses" permission to change anything. Reading needs
 import os
 from datetime import date, datetime
 
+from core import fy_lock
 from core.audit import log_event
 from core.permissions import PermissionDenied, has_permission, require_permission
 from db.connection import transaction
@@ -74,6 +75,7 @@ def _insert_expense(
     reversal_of=None, corrects_id=None, reason=None, original_payment_id=None, paid_at=None,
 ):
     """Insert the expense row and its payment row. Returns the expense id."""
+    fy_lock.ensure_open(conn, expense_date)
     cur = conn.execute(
         "INSERT INTO expenses(expense_date, category, description, amount_paise, payment_mode, reference, "
         "notes, attachment_path, reversal_of, corrects_id, reason, user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",

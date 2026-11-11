@@ -10,6 +10,8 @@ Rules every report here follows:
 * Suggestions (reorder list) never place an order.
 """
 
+from datetime import date
+
 from core.permissions import has_permission, require_permission
 from core.report_common import iso_date, require_view
 
@@ -285,6 +287,68 @@ def stock_flow(conn, date_from, date_to, *, user_id, product_id=None) -> dict:
         "date_from": start, "date_to": end, "rows": rows, "totals": totals,
         "formula": "opening + received - purchase returned - sold + adjustments + count differences + other = closing",
     }
+
+
+# ---------- items that did not sell (slow-moving stock) ----------
+
+UNSOLD_NOTE = (
+    "Only stock you can sell today is listed. 'Pieces sold' counts the pieces on bills in the period; returns are "
+    "not subtracted. 'Days since last sale' counts up to the last day of the period. Never sold = no sale on record."
+)
+
+
+def unsold_stock(conn, date_from, date_to, *, user_id, max_sold=0, category=None, brand=None) -> dict:
+    """Stock on the shelf that sold little or nothing in a period (PDF 1 section 16.5: slow-moving items and items
+    with no sales). max_sold=0 lists items that did not sell at all; 2 lists items that sold 2 pieces or fewer.
+
+    Oldest sale first, items that never sold at the top. Stock value (at the last purchase cost) is added only for
+    users who may see costs.
+    """
+    require_view(conn, user_id)
+    start, end = iso_date(date_from, "From date"), iso_date(date_to, "To date")
+    if start > end:
+        raise ValueError("The From date cannot be after the To date.")
+    if isinstance(max_sold, bool) or not isinstance(max_sold, int) or max_sold < 0:
+        raise ValueError("The number of pieces must be zero or more.")
+    show_cost = has_permission(conn, user_id, "view_cost")
+
+    stock = _stock_rows(conn, product_id=None, category=category, brand=brand, search=None, status=None,
+                        include_inactive=False)
+    sold = {r["variant_id"]: r["qty"] for r in conn.execute(
+        "SELECT m.variant_id, -SUM(m.qty_change) AS qty FROM stock_movements m WHERE m.bucket = 'sellable' "
+        "AND m.doc_type = 'sale' AND substr(m.created_at, 1, 10) BETWEEN ? AND ? GROUP BY m.variant_id", (start, end))}
+    last = {r["variant_id"]: r["day"] for r in conn.execute(
+        "SELECT m.variant_id, MAX(substr(m.created_at, 1, 10)) AS day FROM stock_movements m WHERE m.bucket = 'sellable' "
+        "AND m.doc_type = 'sale' AND substr(m.created_at, 1, 10) <= ? GROUP BY m.variant_id", (end,))}
+    end_day = date.fromisoformat(end)
+
+    rows = []
+    for r in stock:
+        if r["sellable_qty"] <= 0:
+            continue
+        pieces = sold.get(r["variant_id"], 0)
+        if pieces > max_sold:
+            continue
+        last_day = last.get(r["variant_id"])
+        row = {
+            "product": r["product"], "category": r["category"], "brand": r["brand"], "size": r["size"],
+            "colour": r["colour"], "sku": r["sku"], "rack_location": r["rack_location"],
+            "in_stock": r["sellable_qty"], "pieces_sold": pieces, "last_sold": last_day,
+            "days_since_last_sale": (end_day - date.fromisoformat(last_day)).days if last_day else None,
+        }
+        if show_cost:
+            bought = _last_purchase(conn, r["variant_id"])
+            row["stock_value_paise"] = r["sellable_qty"] * bought["unit_cost_paise"] if bought else None
+        rows.append(row)
+    rows.sort(key=lambda x: (x["days_since_last_sale"] is not None, -(x["days_since_last_sale"] or 0),
+                             x["product"].lower(), (x["colour"] or "").lower(), _size_key(x["size"])))
+    result = {
+        "date_from": start, "date_to": end, "max_sold": max_sold, "variants": len(rows),
+        "units_in_stock": sum(r["in_stock"] for r in rows), "rows": rows, "note": UNSOLD_NOTE,
+    }
+    if show_cost:
+        result["stock_value_paise"] = sum(r["stock_value_paise"] or 0 for r in rows)
+    return result
 
 
 # ---------- unsellable stock ----------

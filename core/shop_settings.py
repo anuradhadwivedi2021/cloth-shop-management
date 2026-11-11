@@ -267,6 +267,21 @@ SPEC = {
                        group="Bill", label="Bill paper"),
     "bill_footer": dict(kind="text", default="", max=300, group="Bill", label="Text at the bottom of the bill"),
     "show_return_policy_on_bill": dict(kind="bool", default="1", group="Bill", label="Print the return policy on the bill"),
+    "show_upi_qr_on_bill": dict(kind="bool", default="1", group="Bill",
+                                label="Print a UPI QR on bills that still have an amount to pay (needs the shop's UPI id)"),
+    # --- loyalty points (CUS-05)
+    "loyalty_enabled": dict(kind="bool", default="0", group="Loyalty", label="Give loyalty points to customers on bills"),
+    "loyalty_points_per_100": dict(kind="int", default="1", min=1, max=100, group="Loyalty",
+                                   label="Points earned for every Rs 100 paid"),
+    "loyalty_point_value_paise": dict(kind="int", default="100", min=1, max=10000, group="Loyalty",
+                                      label="Value of one point when used (in paise)"),
+    "loyalty_min_redeem_points": dict(kind="int", default="50", min=1, max=100000, group="Loyalty",
+                                      label="Fewest points that can be used at once"),
+    # --- barcode labels (SRS STK-05)
+    "label_size": dict(kind="choice", default="50x25", choices=("50x25", "38x25"), group="Labels",
+                       label="Barcode label size (mm)"),
+    "label_show_shop_name": dict(kind="bool", default="1", group="Labels", label="Print the shop name on labels"),
+    "label_show_mrp": dict(kind="bool", default="1", group="Labels", label="Print the MRP on labels (when the product has one)"),
     # --- screens and security
     "ui_language": dict(kind="choice", default="en", choices=("en", "hi", "mr"), group="Screens", label="Language of the screens"),
     "auto_lock_minutes": dict(kind="int", default=str(DEFAULT_AUTO_LOCK_MINUTES), min=1, max=240, group="Security",

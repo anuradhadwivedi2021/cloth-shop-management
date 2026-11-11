@@ -39,7 +39,8 @@ _ACTIONS = {
     "prices": {"price_changed"},
     "stock_adjustments": {"stock_count_started", "stock_count_applied", "stock_count_cancelled"},
     "discounts": {"discount_override", "discount_cap_changed", "credit_limit_override"},
-    "bills": {"sale_reprint", "sale_return_created"},
+    "bills": {"sale_reprint", "sale_return_created", "labels_printed", "estimate_created", "estimate_converted",
+              "estimate_cancelled"},
     "logins": {
         "login", "login_failed", "login_blocked", "account_unlocked", "owner_pin_approved",
         "owner_pin_failed", "password_changed", "pin_changed", "recovery_key_used",
@@ -48,7 +49,8 @@ _ACTIONS = {
     "money": {
         "cash_day_opened", "cash_day_closed", "cash_movement", "expense_added", "expense_corrected",
         "expense_reversed", "supplier_payment", "supplier_payment_reversed", "supplier_opening_balance_set",
-        "customer_payment_received", "customer_receipt_reversed", "credit_terms_changed", "due_date_changed",
+        "customer_payment_received", "customer_receipt_reversed", "tally_exported", "fin_year_locked", "fin_year_unlocked", "voucher_issued", "voucher_cancelled",
+        "loyalty_adjusted", "store_credit_adjusted", "credit_terms_changed", "due_date_changed",
     },
     "settings": {"settings_changed", "shop_profile_changed", "series_prefix_changed", "tax_rule_added", "tax_rule_ended"},
     "data": {
@@ -57,7 +59,7 @@ _ACTIONS = {
     },
     "records": {
         "product_created", "product_updated", "product_activated", "variant_updated", "variant_activated",
-        "variants_added", "customer_created", "customer_updated", "customer_reactivated", "supplier_created",
+        "variants_added", "products_imported", "product_image_added", "product_image_removed", "customer_created", "customer_updated", "customer_reactivated", "supplier_created",
         "supplier_updated", "sale_created", "purchase_confirmed", "purchase_draft_saved",
         "purchase_draft_replaced", "purchase_draft_cancelled", "purchase_return_created",
     },

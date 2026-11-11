@@ -16,6 +16,7 @@ from datetime import date
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
+from core import stock_ageing
 from core import report_export, reports_audit, reports_money, reports_purchase, reports_sales, reports_stock
 from core.money import format_rupees
 from core.permissions import has_permission
@@ -42,6 +43,12 @@ PURCHASE_GROUP_TEXT = {
     "category": N_("Category"), "brand": N_("Brand"), "day": N_("Day"), "month": N_("Month"),
 }
 STOCK_STATUS_TEXT = {None: N_("All stock"), "low": N_("Low stock"), "out": N_("Out of stock"), "ok": N_("In stock")}
+UNSOLD_TEXT = {
+    0: N_("did not sell at all"), 1: N_("sold 1 piece or less"), 2: N_("sold 2 pieces or less"),
+    5: N_("sold 5 pieces or less"),
+}
+
+AGEING_TEXT = {0: N_("All stock"), 61: N_("older than 60 days"), 91: N_("older than 90 days"), 181: N_("older than 180 days")}
 
 GROUP_TEXT = {"sales": N_("Sales"), "purchases": N_("Purchases"), "stock": N_("Stock"), "money": N_("Money"),
               "audit": N_("Audit and checks")}
@@ -97,6 +104,12 @@ REPORTS = [
               lambda c, u, a, b, x: reports_stock.reorder_list(c, user_id=u), needs_dates=False),
     ReportDef("stock_flow", "stock", N_("Stock received and sold"),
               lambda c, u, a, b, x: reports_stock.stock_flow(c, a, b, user_id=u)),
+    ReportDef("unsold", "stock", N_("Items that did not sell"),
+              lambda c, u, a, b, x: reports_stock.unsold_stock(c, a, b, user_id=u, max_sold=x),
+              choices=_choices(N_("Show items that"), UNSOLD_TEXT)),
+    ReportDef("ageing", "stock", N_("Stock ageing"),
+              lambda c, u, a, b, x: stock_ageing.stock_ageing(c, user_id=u, min_age_days=x or 0),
+              needs_dates=False, choices=_choices(N_("Show"), AGEING_TEXT)),
     ReportDef("damaged", "stock", N_("Damaged and waiting-for-check stock"),
               lambda c, u, a, b, x: reports_stock.damaged_stock(c, user_id=u), needs_dates=False),
     ReportDef("valuation", "stock", N_("Stock value at cost"),

@@ -24,6 +24,7 @@ All money is integer paise.
 
 from datetime import date, timedelta
 
+from core import fy_lock
 from core.audit import log_event
 from core.numbering import financial_year, next_number
 from core.sales import ACCEPTED_PAYMENT_MODES, _on, enabled_payment_modes, save_sale_in_transaction
@@ -318,6 +319,7 @@ def process_return(
 
         # ---- numbering first: the replacement bill refers to this credit note ----
         fin_year = financial_year(on)
+        fy_lock.ensure_open(conn, fin_year)
         number, credit_note_no = next_number(conn, CREDIT_NOTE_SERIES, fin_year, CREDIT_NOTE_SERIES)
 
         refund = store_credit = credit_applied = 0
@@ -405,6 +407,9 @@ def process_return(
                 "VALUES (?, ?, 'sale_return', ?, ?, ?)",
                 (customer, store_credit, return_id, credit_note_no, user_id),
             )
+
+        from core import wallet
+        wallet.claw_back_points(conn, sale_id, return_id, total, sale["total_paise"], user_id)
 
         log_event(
             conn, "sale_return_created", user_id=user_id, entity="sale_return", entity_id=return_id,

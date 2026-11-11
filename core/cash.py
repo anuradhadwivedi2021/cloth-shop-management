@@ -37,6 +37,7 @@ _CASH_SIGN = {
     "purchase": -1,
     "purchase_return": -1,
     "expense": -1,
+    "other": 1,          # a gift voucher sold for cash
 }
 
 
@@ -52,7 +53,7 @@ def _cash_by_type(conn, business_date: str) -> dict:
     rows = conn.execute(
         "SELECT document_type, SUM(amount_paise) AS total FROM payments "
         "WHERE mode = 'cash' AND substr(created_at, 1, 10) = ? "
-        "AND document_type IN ('sale','sale_return','purchase','purchase_return','expense') "
+        "AND document_type IN ('sale','sale_return','purchase','purchase_return','expense','other') "
         "GROUP BY document_type",
         (business_date,),
     ).fetchall()

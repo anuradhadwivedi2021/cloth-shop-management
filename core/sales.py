@@ -18,6 +18,7 @@ All money is integer paise.
 import json
 from datetime import date
 
+from core import fy_lock
 from core.audit import log_event
 from core.numbering import financial_year, next_number
 from core.permissions import require_permission
@@ -164,6 +165,7 @@ def save_sale_in_transaction(
     on_date=None,
     credit_available_paise=0,
     credit_reference=None,
+    tenders=None,
 ) -> int:
     """Save a finished bill. Returns the sale id.
 
@@ -174,6 +176,9 @@ def save_sale_in_transaction(
     credit_available_paise / credit_reference: value of a credit note that may
     pay for this bill (exchange). Up to the bill total is used; it is recorded as
     a non-cash 'store_credit' payment that points at the credit note number.
+
+    tenders: loyalty points, a gift voucher and/or store credit used as part payment (see core.wallet). They are
+    checked and taken from the balances in this same transaction, and can never pay more than the bill.
 
     cart: list of {"variant_id", "qty", optional "discount_paise" (item discount),
           optional "rate_percent" (owner-confirmed GST rate)}.
@@ -249,13 +254,16 @@ def save_sale_in_transaction(
     )
     total = calc["total_paise"]
     credit_used = min(max(int(credit_available_paise or 0), 0), total)
+    from core import wallet                      # late import: wallet does not import sales
+    plan = wallet.plan_tenders(conn, tenders, customer_id=customer_id, limit_paise=total - credit_used, on=on)
     applied, tendered, change, _due = _settle_payments(
-        payments, total - credit_used, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id,
+        payments, total - credit_used - plan.total_paise, credit_ok=get_bool(conn, "credit_sales_enabled"), customer_id=customer_id,
         modes=enabled_payment_modes(conn),
     )
 
     series, prefix = SALE_SERIES[mode]
     fin_year = financial_year(on)
+    fy_lock.ensure_open(conn, fin_year)
     number, invoice_no = next_number(conn, series, fin_year, prefix)
 
     cur = conn.execute(
@@ -307,6 +315,14 @@ def save_sale_in_transaction(
             "VALUES ('sale', ?, 'store_credit', ?, ?, ?)",
             (sale_id, credit_used, credit_reference, user_id),
         )
+    for pay in plan.payments:
+        conn.execute(
+            "INSERT INTO payments(document_type, document_id, mode, amount_paise, reference, user_id) "
+            "VALUES ('sale', ?, ?, ?, ?, ?)",
+            (sale_id, pay["mode"], pay["amount_paise"], pay["reference"], user_id),
+        )
+    plan.apply(conn, sale_id, user_id)
+    wallet.earn_points_in_sale(conn, sale_id, customer_id, total - credit_used - plan.total_paise, user_id)
 
     if held_slot is not None:
         conn.execute("DELETE FROM held_bills WHERE slot = ?", (held_slot,))

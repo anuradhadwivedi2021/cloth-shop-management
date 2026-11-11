@@ -17,6 +17,7 @@ Devanagari (Hindi/Marathi) needs a font that has it: Nirmala UI on Windows is us
 without the raqm text engine, joined letters can look slightly off: complex_text_supported() tells.
 """
 
+import io
 import os
 from pathlib import Path
 
@@ -126,6 +127,11 @@ class _Sheet:
         self.ops.append(("text", (self.width - w) / 2, top + 4, text, "b"))
         self.y = top + h + 22
 
+    def picture(self, png, side):
+        """Centre a small PNG (the UPI QR) at `side` pixels square."""
+        self.ops.append(("picture", (self.width - side) / 2, self.y, png, side))
+        self.y += side + 6
+
     def draw(self):
         image = Image.new("RGB", (self.width, int(self.y + self.pad)), "white")
         canvas = ImageDraw.Draw(image)
@@ -136,6 +142,9 @@ class _Sheet:
                 canvas.line([(self.pad, op[1]), (self.width - self.pad, op[1])], fill="black", width=1)
             elif op[0] == "box":
                 canvas.rectangle(op[1:], outline="black", width=2)
+            elif op[0] == "picture":
+                small = Image.open(io.BytesIO(op[3])).convert("RGB").resize((op[4], op[4]), Image.NEAREST)
+                image.paste(small, (int(op[1]), int(op[2])))
         return image
 
 
@@ -243,6 +252,10 @@ def render_bill_image(bill, *, width_px=None) -> Image.Image:
     if bill["due_paise"] > 0:
         row(w["balance_due"], bill["due_paise"], font="b")
     sheet.y += 6
+    if bill.get("upi"):                       # BIL-13: static UPI QR for the amount still to pay
+        sheet.paragraph(w["scan_to_pay"], font="b", align="center", gap=4)
+        sheet.picture(bill["upi"]["png"], max(180, min(width // 2, 320)))
+        sheet.paragraph(f"{w['upi_to']}: {bill['upi']['upi_id']}", font="small", align="center", gap=6)
     notes = []
     if bill["tax_mode"] == "composition":
         notes.append(w["composition"])

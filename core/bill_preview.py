@@ -17,9 +17,11 @@ from core.tax import calculate_bill, load_tax_rules
 _SELECT = (
     "SELECT v.id AS variant_id, v.size, v.colour, v.barcode, v.sku, v.price_override_paise, "
     "v.is_active AS v_active, p.id AS product_id, p.name, p.hsn, p.gst_rate_percent, "
-    "p.default_price_paise, p.is_active AS p_active, COALESCE(s.sellable_qty, 0) AS sellable "
+    "p.default_price_paise, p.is_active AS p_active, "
+    # a sum for just this variant: joining the variant_stock view works out every variant first (slow on a big shop)
+    "COALESCE((SELECT SUM(m.qty_change) FROM stock_movements m "
+    "WHERE m.variant_id = v.id AND m.bucket = 'sellable'), 0) AS sellable "
     "FROM variants v JOIN products p ON p.id = v.product_id "
-    "LEFT JOIN variant_stock s ON s.variant_id = v.id "
 )
 
 

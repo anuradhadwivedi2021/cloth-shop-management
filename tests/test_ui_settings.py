@@ -252,7 +252,7 @@ def test_ending_needs_a_chosen_rule_and_a_valid_date(folder):
 
 def test_owner_changes_a_document_prefix(folder):
     conn, view, shown = _open(folder)
-    assert view.tbl_series.rowCount() == 9
+    assert view.tbl_series.rowCount() == 10
     view.tbl_series.setCurrentCell(0, 0)  # the tax invoice series
     assert view._series[0]["series"] == "INV"
     view._text_dialog = lambda *a, **k: "SHOP"

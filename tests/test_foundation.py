@@ -269,11 +269,10 @@ def test_main_window_opens_in_the_shops_language(window_for):
 # ================================================================ printing interface
 
 def test_printing_says_not_connected_instead_of_pretending():
-    # bills are connected (tests/test_print_service.py); these three are still to come
+    # bills are connected (tests/test_print_service.py) and labels (tests/test_labels.py); these two are still to come
     for result in (
         print_service.print_credit_note(None, None, 1),
         print_service.print_receipt(None, None, 1),
-        print_service.print_labels(None, None, [{"variant_id": 1, "copies": 2}]),
     ):
         assert result.ok is False and "not connected" in result.message and result.path is None
 

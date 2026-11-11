@@ -32,6 +32,7 @@ KNOWN_SERIES = {
     "SPV": "Supplier payment voucher",
     "RCT": "Customer payment receipt",
     "CNT": "Stock count",
+    "EST": "Estimate / quotation",
 }
 _PREFIX = re.compile(r"[A-Z0-9]{1,8}")
 

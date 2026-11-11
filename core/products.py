@@ -158,10 +158,12 @@ def find_variant_by_code(conn, code):
     code = (code or "").strip()
     if not code:
         return None
-    return conn.execute(
-        "SELECT * FROM variants WHERE barcode = ? OR alt_barcode = ? OR upper(sku) = upper(?) LIMIT 1",
-        (code, code, code),
-    ).fetchone()
+    # one indexed lookup at a time (an OR across columns makes SQLite read the whole table)
+    for where in ("barcode = ?", "alt_barcode = ?", "upper(sku) = upper(?)"):
+        found = conn.execute(f"SELECT * FROM variants WHERE {where} LIMIT 1", (code,)).fetchone()
+        if found:
+            return found
+    return None
 
 
 def list_variants_with_stock(conn, product_id):

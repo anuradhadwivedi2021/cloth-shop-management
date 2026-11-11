@@ -26,6 +26,7 @@ from core.product_detail import (
 )
 from core.product_edit import set_product_active, set_rack_location, set_variant_active
 from ui.i18n import N_, tr
+from ui.product_photos_panel import ProductPhotosPanel
 from ui.size_set_widgets import SizeSetPicker
 from ui.widgets import form, label
 
@@ -89,6 +90,8 @@ class ProductDetailView(QWidget):
         column.setContentsMargins(0, 0, 6, 0)
         column.setSpacing(12)
         column.addWidget(self._details_card())
+        self.photos = ProductPhotosPanel(self.conn, self.session, self.product_id)
+        column.addWidget(self.photos)
         column.addWidget(self._variants_card(), 1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -205,6 +208,8 @@ class ProductDetailView(QWidget):
         self.product_id = product_id
         self.new_sizes.clear()
         self.new_colours.clear()
+        self.photos.product_id = product_id
+        self.photos.load()
         self.refresh()
 
     def _fill(self, detail):

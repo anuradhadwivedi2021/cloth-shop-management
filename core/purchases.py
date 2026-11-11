@@ -12,6 +12,7 @@ The tax and rounding method must be confirmed with the owner's accountant.
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
+from core import fy_lock
 from core.numbering import financial_year, next_number
 from core.stock import add_movement
 from db.connection import transaction
@@ -210,6 +211,7 @@ def confirm_purchase_in_transaction(conn, purchase_id, *, user_id=None, payment_
     if not lines:
         raise ValueError("This purchase has no lines.")
 
+    fy_lock.ensure_open(conn, purchase["fin_year"])
     _, voucher_no = next_number(conn, "PUR", purchase["fin_year"], "PUR")
 
     for line in lines:

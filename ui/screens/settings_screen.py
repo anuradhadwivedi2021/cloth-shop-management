@@ -34,6 +34,7 @@ SCHEME_TEXT = {
 CHOICE_TEXT = {
     **SCHEME_TEXT,
     "a4": N_("A4"), "a5": N_("A5"), "thermal58": N_("Thermal 58 mm"), "thermal80": N_("Thermal 80 mm"),
+    "50x25": N_("50 × 25 mm"), "38x25": N_("38 × 25 mm"),
 }
 RULE_STATUS = {"active": N_("Active"), "future": N_("Starts later"), "ended": N_("Ended")}
 # Preferences that are read when someone signs in, so a change shows from the next sign-in.

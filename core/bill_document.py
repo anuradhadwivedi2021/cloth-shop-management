@@ -17,12 +17,14 @@ Rules (SRS BIL-06, BIL-09, BIL-11, BIL-15):
     which can differ from the language of the screens.
 """
 
+import base64
 from html import escape
 
 from core.money import format_rupees
 from core.sales import get_sale, reprint_sale
 from core.settings import get_bool, get_setting
 from core.shop_settings import get_shop_profile
+from core.upi_qr import qr_for_bill
 
 LANGUAGES = ("en", "hi", "mr")
 
@@ -49,7 +51,7 @@ _TEXT = {
         "thanks": "Thank you! Please visit again.",
         "duplicate_copy": "Duplicate copy", "copy_no": "copy {n}",
         "composition": "Composition taxable person, not eligible to collect tax on supplies.",
-        "gst_included": "Prices include GST",
+        "gst_included": "Prices include GST", "scan_to_pay": "Scan to pay by UPI", "upi_to": "UPI",
         "policy_days": "Returns accepted within {days} days with this bill.",
         "policy_open": "Returns accepted with this bill.",
         "policy_final": "Not returnable: {categories}.",
@@ -67,7 +69,7 @@ _TEXT = {
         "thanks": "धन्यवाद! फिर पधारें।",
         "duplicate_copy": "डुप्लिकेट कॉपी", "copy_no": "कॉपी {n}",
         "composition": "कंपोज़िशन कर-दाता; आपूर्ति पर कर वसूलने का अधिकार नहीं।",
-        "gst_included": "कीमत में GST शामिल है",
+        "gst_included": "कीमत में GST शामिल है", "scan_to_pay": "UPI से भुगतान के लिए स्कैन करें", "upi_to": "UPI",
         "policy_days": "इस बिल के साथ {days} दिन के भीतर वापसी स्वीकार है।",
         "policy_open": "इस बिल के साथ वापसी स्वीकार है।",
         "policy_final": "वापस नहीं होगा: {categories}।",
@@ -85,7 +87,7 @@ _TEXT = {
         "thanks": "धन्यवाद! पुन्हा भेट द्या.",
         "duplicate_copy": "डुप्लिकेट प्रत", "copy_no": "प्रत {n}",
         "composition": "कंपोझिशन करदाता; पुरवठ्यावर कर आकारण्यास पात्र नाही.",
-        "gst_included": "किमतीत GST समाविष्ट आहे",
+        "gst_included": "किमतीत GST समाविष्ट आहे", "scan_to_pay": "UPI ने पैसे देण्यासाठी स्कॅन करा", "upi_to": "UPI",
         "policy_days": "या बिलासह {days} दिवसांत परतावा स्वीकारला जाईल.",
         "policy_open": "या बिलासह परतावा स्वीकारला जाईल.",
         "policy_final": "परत घेतले जाणार नाही: {categories}.",
@@ -192,6 +194,10 @@ def build_bill(conn, sale_id, *, user_id=None, duplicate=False) -> dict:
         for p in data["payments"] if not p.get("reversal_of")
     ]
 
+    upi = None            # BIL-13: a static UPI QR for the amount still to pay (the cashier confirms the money)
+    if data["due_paise"] > 0 and get_bool(conn, "show_upi_qr_on_bill", True):
+        upi = qr_for_bill(shop, data["due_paise"], note=sale["invoice_no"])
+
     footer = (get_setting(conn, "bill_footer") or "").strip()
     policy = _policy_text(conn, words) if get_bool(conn, "show_return_policy_on_bill", True) else ""
 
@@ -221,6 +227,7 @@ def build_bill(conn, sale_id, *, user_id=None, duplicate=False) -> dict:
         "paid_paise": data["paid_paise"],
         "change_paise": sale["change_paise"] or 0,
         "due_paise": data["due_paise"],
+        "upi": upi,
         "footer": footer,
         "policy": policy,
         "is_duplicate": bool(duplicate),
@@ -378,6 +385,14 @@ def bill_html(bill) -> str:
         out.append(f'<tr><td><b>{_e(w["balance_due"])}</b></td>'
                    f'<td align="right"><b>{_e(_money(bill["due_paise"]))}</b></td></tr>')
     out.append("</table>")
+
+    # ----- UPI QR (only on a bill that still has an amount to pay)
+    if bill.get("upi"):
+        side = 150 if roll and not narrow else (110 if narrow else 130)
+        data_uri = "data:image/png;base64," + base64.b64encode(bill["upi"]["png"]).decode("ascii")
+        out.append(f'<p align="center"><b>{_e(w["scan_to_pay"])}</b><br>'
+                   f'<img src="{data_uri}" width="{side}" height="{side}"><br>'
+                   f'{_e(w["upi_to"])}: {_e(bill["upi"]["upi_id"])}</p>')
 
     # ----- footer
     if bill["tax_mode"] == "composition":
