@@ -451,7 +451,7 @@ def test_birthdays_and_inactive_customers_are_lists_for_the_owner_to_act_on(s):
     today = date.today()
     cu.update_customer(conn, s.meena, user_id=s.owner, birthday=f"{today.month:02d}-{today.day:02d}")
     view.refresh()
-    assert view.tbl_birthdays.rowCount() == 1 and view.tbl_birthdays.item(0, 3).text() == "today"
+    assert view.tbl_birthdays.rowCount() == 1 and view.tbl_birthdays.item(0, 4).text() == "today"
     assert view.tbl_inactive.rowCount() == 0                              # everyone is new in this test shop
 
 

@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from core import stock_ageing
+from core import commission
 from core import report_export, reports_audit, reports_money, reports_purchase, reports_sales, reports_stock
 from core.money import format_rupees
 from core.permissions import has_permission
@@ -79,6 +80,8 @@ REPORTS = [
     ReportDef("sales_by", "sales", N_("Sales grouped by"),
               lambda c, u, a, b, x: reports_sales.sales_by(c, a, b, x, user_id=u),
               choices=_choices(N_("Group by"), SALES_GROUP_TEXT)),
+    ReportDef("commission", "sales", N_("Commission by salesperson"),
+              lambda c, u, a, b, x: commission.commission_report(c, a, b, user_id=u)),
     ReportDef("day_book", "sales", N_("Day book"),
               lambda c, u, a, b, x: reports_sales.day_book(c, a, b, user_id=u)),
     ReportDef("gst_sales", "sales", N_("GST sales register"),

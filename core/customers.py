@@ -36,7 +36,7 @@ DEFAULT_RETENTION_MONTHS = 24
 # detail) ever reaches the permanent audit log.
 ERASE_REASONS = ("customer_request", "consent_withdrawn", "retention_review", "other")
 
-_EDITABLE = ("name", "phone", "address", "gstin", "birthday", "preferred_size", "notes")
+_EDITABLE = ("name", "phone", "address", "gstin", "birthday", "anniversary", "preferred_size", "notes")
 _GSTIN_SHAPE = re.compile(r"^(\d{2})[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 _GSTIN_CHARS = string.digits + string.ascii_uppercase
 _STATE_CODES = {f"{n:02d}" for n in range(1, 39)} | {"97", "99"}
@@ -98,7 +98,7 @@ def validate_gstin(value) -> str:
     return gstin
 
 
-def _clean_birthday(value, today=None):
+def _clean_birthday(value, today=None, what="Birthday"):
     """YYYY-MM-DD, or MM-DD when the customer does not want to give the year."""
     value = _text(value)
     if value is None:
@@ -107,16 +107,16 @@ def _clean_birthday(value, today=None):
         try:
             date(2000, int(value[:2]), int(value[3:]))  # 2000 is a leap year, so 02-29 is allowed
         except ValueError:
-            raise ValueError("Birthday is not a real date.") from None
+            raise ValueError(f"{what} is not a real date.") from None
         return value
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        raise ValueError("Birthday must look like 2001-03-25 (or 03-25 without the year).")
+        raise ValueError(f"{what} must look like 2001-03-25 (or 03-25 without the year).")
     try:
         born = date.fromisoformat(value)
     except ValueError:
-        raise ValueError("Birthday is not a real date.") from None
+        raise ValueError(f"{what} is not a real date.") from None
     if born > (today or date.today()) or born.year < 1900:
-        raise ValueError("Birthday is not a believable date.")
+        raise ValueError(f"{what} is not a believable date.")
     return value
 
 
@@ -129,6 +129,8 @@ def _clean_fields(changes: dict) -> dict:
             out[key] = validate_gstin(value) if _text(value) else None
         elif key == "birthday":
             out[key] = _clean_birthday(value)
+        elif key == "anniversary":
+            out[key] = _clean_birthday(value, what="Anniversary")
         else:
             out[key] = _text(value)
     return out
@@ -193,7 +195,7 @@ def _bills_and_returns(conn, customer_id):
 
 def create_customer(
     conn, phone, *, user_id, name=None, address=None, gstin=None, birthday=None,
-    preferred_size=None, notes=None, consent_given=False, consent_purpose=None,
+    preferred_size=None, notes=None, anniversary=None, consent_given=False, consent_purpose=None,
     allow_duplicate_phone=False,
 ) -> int:
     """Save a customer profile. Returns the customer id.
@@ -209,7 +211,7 @@ def create_customer(
         )
     fields = _clean_fields({
         "phone": phone, "name": name, "address": address, "gstin": gstin,
-        "birthday": birthday, "preferred_size": preferred_size, "notes": notes,
+        "birthday": birthday, "anniversary": anniversary, "preferred_size": preferred_size, "notes": notes,
     })
     with transaction(conn):
         if not allow_duplicate_phone:
@@ -217,9 +219,9 @@ def create_customer(
         purpose = _text(consent_purpose) or get_setting(conn, "customer_consent_purpose") or DEFAULT_CONSENT_PURPOSE
         now = _now()
         cur = conn.execute(
-            "INSERT INTO customers(name, phone, address, gstin, birthday, preferred_size, notes, "
-            "consent_given, consent_date, consent_purpose, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?)",
-            (fields["name"], fields["phone"], fields["address"], fields["gstin"], fields["birthday"],
+            "INSERT INTO customers(name, phone, address, gstin, birthday, anniversary, preferred_size, notes, "
+            "consent_given, consent_date, consent_purpose, updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?,?)",
+            (fields["name"], fields["phone"], fields["address"], fields["gstin"], fields["birthday"], fields["anniversary"],
              fields["preferred_size"], fields["notes"], now, purpose, now),
         )
         log_event(conn, "customer_created", user_id=user_id, entity="customer", entity_id=cur.lastrowid,
@@ -440,7 +442,7 @@ def erase_customer(conn, customer_id, *, user_id, reason) -> dict:
         keep_for_tax = bool(row["gstin"] and billed)
         now = _now()
         conn.execute(
-            "UPDATE customers SET name = ?, gstin = ?, phone = '', address = NULL, birthday = NULL, "
+            "UPDATE customers SET name = ?, gstin = ?, phone = '', address = NULL, birthday = NULL, anniversary = NULL, "
             "preferred_size = NULL, notes = NULL, consent_given = 0, consent_date = NULL, consent_purpose = NULL, "
             "is_active = 0, anonymised_at = ?, updated_at = ? WHERE id = ?",
             (row["name"] if keep_for_tax else "Erased customer", row["gstin"] if keep_for_tax else None,
@@ -452,7 +454,7 @@ def erase_customer(conn, customer_id, *, user_id, reason) -> dict:
     return {
         "customer_id": customer_id,
         "kept_for_tax": ["name", "gstin"] if keep_for_tax else [],
-        "erased": ["phone", "address", "birthday", "preferred_size", "notes", "consent"]
+        "erased": ["phone", "address", "birthday", "anniversary", "preferred_size", "notes", "consent"]
         + ([] if keep_for_tax else ["name", "gstin"]),
     }
 
@@ -509,23 +511,26 @@ def inactive_customers(conn, *, user_id, months=None, today=None) -> list:
 
 
 def upcoming_birthdays(conn, *, user_id, days=7, today=None) -> list:
-    """Active customers whose birthday falls in the next `days` days (a list to call; nothing is sent)."""
+    """Active customers whose birthday or wedding anniversary falls in the next `days` days (a list to call;
+    nothing is sent). One row per occasion: "occasion" is "birthday" or "anniversary"; "birthday" holds MM-DD."""
     require_permission(conn, user_id, "view_customers", "view customers")
     today = today or date.today()
     out = []
     for r in conn.execute(
-        "SELECT id, name, phone, birthday FROM customers "
-        "WHERE is_active = 1 AND anonymised_at IS NULL AND birthday IS NOT NULL"
+        "SELECT id, name, phone, birthday, anniversary FROM customers "
+        "WHERE is_active = 1 AND anonymised_at IS NULL AND (birthday IS NOT NULL OR anniversary IS NOT NULL)"
     ):
-        month, day = int(r["birthday"][-5:-3]), int(r["birthday"][-2:])
-        for year in (today.year, today.year + 1):
-            # 29 Feb is celebrated on 28 Feb in years that have no 29 Feb
-            when = date(year, month, 28 if (month, day) == (2, 29) and not calendar.isleap(year) else day)
-            if when >= today:
-                break
-        if (when - today).days <= days:
-            out.append({"id": r["id"], "name": r["name"], "phone": r["phone"],
-                        "birthday": r["birthday"][-5:], "days_until": (when - today).days})
-    return sorted(out, key=lambda item: (item["days_until"], item["name"] or ""))
-
-
+        for occasion in ("birthday", "anniversary"):
+            stored = r[occasion]
+            if not stored:
+                continue
+            month, day = int(stored[-5:-3]), int(stored[-2:])
+            for year in (today.year, today.year + 1):
+                # 29 Feb is celebrated on 28 Feb in years that have no 29 Feb
+                when = date(year, month, 28 if (month, day) == (2, 29) and not calendar.isleap(year) else day)
+                if when >= today:
+                    break
+            if (when - today).days <= days:
+                out.append({"id": r["id"], "name": r["name"], "phone": r["phone"], "occasion": occasion,
+                            "birthday": stored[-5:], "days_until": (when - today).days})
+    return sorted(out, key=lambda item: (item["days_until"], item["name"] or "", item["occasion"]))

@@ -33,6 +33,7 @@ KNOWN_SERIES = {
     "RCT": "Customer payment receipt",
     "CNT": "Stock count",
     "EST": "Estimate / quotation",
+    "ALT": "Alteration / tailoring job",
 }
 _PREFIX = re.compile(r"[A-Z0-9]{1,8}")
 

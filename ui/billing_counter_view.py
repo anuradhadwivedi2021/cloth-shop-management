@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import bill_preview as bp
+from core import commission as commission_core
 from core import wallet as wallet_core
 from core.auth import AuthError
 from core.customers import get_customer, search_customers
@@ -45,6 +46,7 @@ from core.shop_settings import billing_problems, get_shop_profile, place_of_supp
 from core.stock import InsufficientStockError
 from core.upi_qr import qr_for_bill
 from ui import print_service
+from ui.screen_helpers import fill_combo
 from ui.i18n import N_, tr
 from ui.widgets import label
 
@@ -495,6 +497,8 @@ class BillingCounterView(QWidget):
         self.mode_combo.addItem(tr("Simple bill (no GST)"), "simple")
         self.mode_combo.currentIndexChanged.connect(lambda _i: self._recalc())
         self.customer_label = label(tr("Walk-in customer"), None)
+        self.salesperson_combo = QComboBox()        # BIL-14: shown only when the shop records commission
+        self._fill_salespeople()
         self.discount_edit = QLineEdit()
         self.discount_edit.setPlaceholderText(tr("Bill discount: 150 or 10%   (F7)"))
         self.discount_edit.editingFinished.connect(self._recalc)
@@ -531,6 +535,11 @@ class BillingCounterView(QWidget):
         side.addWidget(self.mode_combo)
         side.addWidget(self.customer_label)
         side.addWidget(self.cust_btn)
+        self.salesperson_caption = label(tr("Salesperson"), "hint")
+        side.addWidget(self.salesperson_caption)
+        side.addWidget(self.salesperson_combo)
+        self.salesperson_caption.setVisible(self._commission_on)
+        self.salesperson_combo.setVisible(self._commission_on)
         side.addWidget(self.discount_edit)
         side.addSpacing(6)
         side.addLayout(grid)
@@ -1027,6 +1036,23 @@ class BillingCounterView(QWidget):
         dlg.exec()
         self._focus_scan()
 
+    def _fill_salespeople(self) -> None:
+        """BIL-14: who gets the credit for this bill (the person signed in, unless the cashier picks someone else)."""
+        self._commission_on = False
+        try:
+            self._commission_on = commission_core.enabled(self.conn)
+            if self._commission_on:
+                people = commission_core.list_salespeople(self.conn, self.user_id)
+                fill_combo(self.salesperson_combo, [(p["name"], p["id"]) for p in people], keep=False)
+                index = self.salesperson_combo.findData(self.user_id)
+                self.salesperson_combo.setCurrentIndex(max(index, 0))
+        except Exception:
+            log.exception("Billing counter: could not read the salespeople")
+            self._commission_on = False
+
+    def _salesperson_id(self):
+        return self.salesperson_combo.currentData() if self._commission_on else None
+
     def _voucher_amount(self, code):
         """What a gift voucher can pay now (0 when the code is unknown, used up, expired or cancelled)."""
         try:
@@ -1089,7 +1115,7 @@ class BillingCounterView(QWidget):
                 customer_id=self.customer_id, mode=self._bill_mode(),
                 intra_state=self._place["intra_state"] if self._bill_mode() == "regular" else True,
                 bill_discount_paise=self._bill_discount, idempotency_key=self._attempt_key, held_slot=self.held_slot,
-                tenders=tenders or None,
+                tenders=tenders or None, salesperson_id=self._salesperson_id(),
             )
         except (ValueError, AuthError, InsufficientStockError) as exc:  # PermissionDenied is a ValueError
             return self._fail(str(exc))

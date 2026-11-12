@@ -277,6 +277,10 @@ SPEC = {
                                       label="Value of one point when used (in paise)"),
     "loyalty_min_redeem_points": dict(kind="int", default="50", min=1, max=100000, group="Loyalty",
                                       label="Fewest points that can be used at once"),
+    # --- commission (BIL-14)
+    "commission_enabled": dict(kind="bool", default="0", group="Commission", label="Record the salesperson on bills and work out commission"),
+    "commission_default_bp": dict(kind="int", default="0", min=0, max=5000, group="Commission",
+                                  label="Default commission (in hundredths of a percent: 150 = 1.5%)"),
     # --- barcode labels (SRS STK-05)
     "label_size": dict(kind="choice", default="50x25", choices=("50x25", "38x25"), group="Labels",
                        label="Barcode label size (mm)"),

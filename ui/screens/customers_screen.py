@@ -46,7 +46,7 @@ BILL_STATUS = {"completed": N_("Completed"), "cancelled": N_("Cancelled")}
 OUTCOME_TEXT = {"refund": N_("Refund"), "store_credit": N_("Store credit"), "exchange": N_("Exchange")}
 FIELD_TEXT = {
     "name": N_("name"), "phone": N_("phone"), "address": N_("address"), "gstin": N_("GSTIN"),
-    "birthday": N_("birthday"), "preferred_size": N_("preferred size"), "notes": N_("notes"),
+    "birthday": N_("birthday"), "anniversary": N_("anniversary"), "preferred_size": N_("preferred size"), "notes": N_("notes"),
 }
 
 
@@ -81,6 +81,8 @@ class NewCustomerDialog(QDialog):
         self.txt_gstin, self.txt_birthday, self.txt_size, self.txt_notes = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
         self.txt_phone.setPlaceholderText(tr("10-digit phone number (required)"))
         self.txt_birthday.setPlaceholderText(tr("DD/MM/YYYY, or DD/MM without the year"))
+        self.txt_anniversary = QLineEdit()
+        self.txt_anniversary.setPlaceholderText(tr("DD/MM/YYYY, or DD/MM without the year"))
         self.chk_consent = QCheckBox(tr("The customer agrees to this"))
         rows = form()
         rows.addRow(tr("Phone"), self.txt_phone)
@@ -88,6 +90,7 @@ class NewCustomerDialog(QDialog):
         rows.addRow(tr("Address"), self.txt_address)
         rows.addRow(tr("GSTIN"), self.txt_gstin)
         rows.addRow(tr("Birthday"), self.txt_birthday)
+        rows.addRow(tr("Anniversary"), self.txt_anniversary)
         rows.addRow(tr("Preferred size"), self.txt_size)
         rows.addRow(tr("Notes"), self.txt_notes)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -103,7 +106,7 @@ class NewCustomerDialog(QDialog):
     def values(self) -> dict:
         return dict(
             phone=self.txt_phone.text(), name=self.txt_name.text(), address=self.txt_address.text(),
-            gstin=self.txt_gstin.text(), birthday=self.txt_birthday.text(), preferred_size=self.txt_size.text(),
+            gstin=self.txt_gstin.text(), birthday=self.txt_birthday.text(), anniversary=self.txt_anniversary.text(), preferred_size=self.txt_size.text(),
             notes=self.txt_notes.text(), consent=self.chk_consent.isChecked(),
         )
 
@@ -186,7 +189,7 @@ class CustomersScreen(ScreenBase, QWidget):
         brow.addWidget(self.spin_days)
         brow.addStretch(1)
         rc.addLayout(brow)
-        self.tbl_birthdays = make_table([tr("Name"), tr("Phone"), tr("Birthday"), tr("In (days)")])
+        self.tbl_birthdays = make_table([tr("Name"), tr("Phone"), tr("Occasion"), tr("Date"), tr("In (days)")])
         rc.addWidget(self.tbl_birthdays, 1)
         self.tbl_inactive = make_table([tr("Name"), tr("Phone"), tr("Last activity"), tr("Store credit")])
         if self.can_data:
@@ -221,12 +224,15 @@ class CustomersScreen(ScreenBase, QWidget):
         self.edit_name, self.edit_phone, self.edit_address = QLineEdit(), QLineEdit(), QLineEdit()
         self.edit_gstin, self.edit_birthday, self.edit_size, self.edit_notes = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
         self.edit_birthday.setPlaceholderText(tr("DD/MM/YYYY, or DD/MM without the year"))
+        self.edit_anniversary = QLineEdit()
+        self.edit_anniversary.setPlaceholderText(tr("DD/MM/YYYY, or DD/MM without the year"))
         rows = form()
         rows.addRow(tr("Name"), self.edit_name)
         rows.addRow(tr("Phone"), self.edit_phone)
         rows.addRow(tr("Address"), self.edit_address)
         rows.addRow(tr("GSTIN"), self.edit_gstin)
         rows.addRow(tr("Birthday"), self.edit_birthday)
+        rows.addRow(tr("Anniversary"), self.edit_anniversary)
         rows.addRow(tr("Preferred size"), self.edit_size)
         rows.addRow(tr("Notes"), self.edit_notes)
         col.addLayout(rows)
@@ -343,6 +349,7 @@ class CustomersScreen(ScreenBase, QWidget):
                           (self.edit_gstin, "gstin"), (self.edit_size, "preferred_size"), (self.edit_notes, "notes")):
             edit.setText((c[key] or "") if c else "")
         self.edit_birthday.setText(birthday_to_text(c["birthday"]) if c else "")
+        self.edit_anniversary.setText(birthday_to_text(c["anniversary"]) if c else "")
         if c is None:
             self.lbl_consent.setText("")
             self.lbl_money.setText("")
@@ -360,7 +367,7 @@ class CustomersScreen(ScreenBase, QWidget):
     def _set_detail_enabled(self) -> None:
         has = self._customer is not None and not self._busy
         for edit in (self.edit_name, self.edit_phone, self.edit_address, self.edit_gstin, self.edit_birthday,
-                     self.edit_size, self.edit_notes):
+                     self.edit_anniversary, self.edit_size, self.edit_notes):
             edit.setEnabled(has and self.can_edit)
         self.btn_save.setEnabled(has and self.can_edit)
         self.btn_consent.setEnabled(has and self.can_edit)
@@ -430,7 +437,7 @@ class CustomersScreen(ScreenBase, QWidget):
             self.add_customer(**dialog.values())
 
     def add_customer(self, phone, name="", address="", gstin="", birthday="", preferred_size="", notes="",
-                     consent=False) -> bool:
+                     consent=False, anniversary="") -> bool:
         """Save a new profile. Needs the customer's consent. Returns True when it was saved."""
         if self._busy:
             return False
@@ -438,6 +445,7 @@ class CustomersScreen(ScreenBase, QWidget):
         fields = dict(name=name, address=address, gstin=gstin, preferred_size=preferred_size, notes=notes)
         try:
             fields["birthday"] = birthday_to_core(birthday)
+            fields["anniversary"] = birthday_to_core(anniversary)
         except ValueError as exc:
             self._error(title, str(exc))
             return False
@@ -495,6 +503,7 @@ class CustomersScreen(ScreenBase, QWidget):
         title = tr("Customers")
         try:
             birthday = birthday_to_core(self.edit_birthday.text())
+            anniversary = birthday_to_core(self.edit_anniversary.text())
         except ValueError as exc:
             self._error(title, str(exc))
             return
@@ -502,7 +511,7 @@ class CustomersScreen(ScreenBase, QWidget):
         ok, changed = self._run(
             lambda: cu.update_customer(
                 self.conn, cid, user_id=self.user_id, name=self.edit_name.text(), phone=self.edit_phone.text(),
-                address=self.edit_address.text(), gstin=self.edit_gstin.text(), birthday=birthday,
+                address=self.edit_address.text(), gstin=self.edit_gstin.text(), birthday=birthday, anniversary=anniversary,
                 preferred_size=self.edit_size.text(), notes=self.edit_notes.text()),
             title=title)
         if not ok:
@@ -640,8 +649,9 @@ class CustomersScreen(ScreenBase, QWidget):
         self.tbl_birthdays.setRowCount(0)
         for r in rows or []:
             when = tr("today") if r["days_until"] == 0 else r["days_until"]
-            add_row(self.tbl_birthdays, [r["name"] or tr("(no name)"), r["phone"], birthday_to_text(r["birthday"]), when],
-                    right={3})
+            occasion = tr("Birthday") if r["occasion"] == "birthday" else tr("Anniversary")
+            add_row(self.tbl_birthdays, [r["name"] or tr("(no name)"), r["phone"], occasion,
+                                         birthday_to_text(r["birthday"]), when], right={4})
 
     def reload_inactive(self) -> None:
         if not self.can_data:

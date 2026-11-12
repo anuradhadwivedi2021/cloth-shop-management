@@ -203,6 +203,10 @@ def save_sale_in_transaction(
         raise ValueError("Customer not found or not active.")
     if salesperson_id is None:
         salesperson_id = user_id
+    elif salesperson_id != user_id and conn.execute(
+        "SELECT 1 FROM users WHERE id = ? AND is_active = 1", (salesperson_id,)
+    ).fetchone() is None:
+        raise ValueError("The salesperson was not found or is not active.")
     if not isinstance(cart, (list, tuple)) or not cart:
         raise ValueError("A bill needs at least one item.")
 

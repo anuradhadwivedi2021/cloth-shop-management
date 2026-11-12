@@ -39,6 +39,7 @@ MENU = [
     (N_("Suppliers"), ("receive_purchase", "view_reports")),
     (N_("Customers"), ("view_customers",)),
     (N_("Gift Vouchers"), ("sell",)),
+    (N_("Commission Rates"), ("manage_settings",)),
     (N_("Sales Returns and Exchanges"), ("process_return",)),
     (N_("Purchase Returns"), ("return_to_supplier",)),
     (N_("Import Data"), ("edit_products",)),

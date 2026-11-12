@@ -478,3 +478,14 @@ def test_whole_flow_keeps_the_audit_chain_valid(shop):
     erase_customer(shop.conn, cid, user_id=shop.owner, reason="consent_withdrawn")
     ok, bad = verify_chain(shop.conn)
     assert ok and bad is None
+
+
+def test_anniversary_is_on_the_call_list(shop):
+    cid = create_customer(shop.conn, "9000000011", user_id=shop.owner, name="Meena", consent_given=True,
+                          birthday="03-25", anniversary="2015-11-03")
+    rows = upcoming_birthdays(shop.conn, user_id=shop.owner, days=7, today=date(2026, 11, 1))
+    assert [(r["id"], r["occasion"], r["days_until"]) for r in rows] == [(cid, "anniversary", 2)]
+    update_customer(shop.conn, cid, user_id=shop.owner, anniversary="11-05")
+    assert upcoming_birthdays(shop.conn, user_id=shop.owner, days=7, today=date(2026, 11, 1))[0]["birthday"] == "11-05"
+    with pytest.raises(ValueError, match="Anniversary"):
+        update_customer(shop.conn, cid, user_id=shop.owner, anniversary="13-45")
