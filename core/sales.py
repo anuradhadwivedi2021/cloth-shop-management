@@ -19,6 +19,7 @@ import json
 from datetime import date
 
 from core import fy_lock
+from core import fabric
 from core.audit import log_event
 from core.numbering import financial_year, next_number
 from core.permissions import require_permission
@@ -218,7 +219,7 @@ def save_sale_in_transaction(
             raise ValueError("Quantity must be a whole number greater than zero.")
         row = conn.execute(
             "SELECT v.id, v.size, v.colour, v.price_override_paise, v.is_active AS v_active, "
-            "p.name, p.hsn, p.gst_rate_percent, p.default_price_paise, p.is_active AS p_active "
+            "p.name, p.hsn, p.gst_rate_percent, p.default_price_paise, p.is_active AS p_active, p.unit, p.min_cut_cm "
             "FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?",
             (item.get("variant_id"),),
         ).fetchone()
@@ -231,6 +232,8 @@ def save_sale_in_transaction(
             price = row["default_price_paise"]
         if price <= 0:
             raise ValueError(f"{_label(row)} has no selling price. Set the price first.")
+        price = fabric.cm_price(row["unit"], price)          # fabric: price per metre -> price of one centimetre
+        fabric.check_cut(row["unit"], qty, row["min_cut_cm"])
 
         line = {
             "variant_id": row["id"],
@@ -306,6 +309,8 @@ def save_sale_in_transaction(
             )
         except InsufficientStockError as exc:
             raise InsufficientStockError(f"{_label(row)}: {exc}") from exc
+        if fabric.is_metre(row["unit"]):
+            fabric.take_from_pieces(conn, line["variant_id"], line["qty"])
 
     for pay in applied:
         conn.execute(

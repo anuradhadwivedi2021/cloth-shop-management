@@ -10,6 +10,7 @@ is the total that gets saved. All money is integer paise.
 
 from datetime import date
 
+from core import fabric
 from core.products import find_variant_by_code
 from core.sales import _has_rule_for
 from core.tax import calculate_bill, load_tax_rules
@@ -17,7 +18,7 @@ from core.tax import calculate_bill, load_tax_rules
 _SELECT = (
     "SELECT v.id AS variant_id, v.size, v.colour, v.barcode, v.sku, v.price_override_paise, "
     "v.is_active AS v_active, p.id AS product_id, p.name, p.hsn, p.gst_rate_percent, "
-    "p.default_price_paise, p.is_active AS p_active, "
+    "p.default_price_paise, p.is_active AS p_active, p.unit, p.min_cut_cm, "
     # a sum for just this variant: joining the variant_stock view works out every variant first (slow on a big shop)
     "COALESCE((SELECT SUM(m.qty_change) FROM stock_movements m "
     "WHERE m.variant_id = v.id AND m.bucket = 'sellable'), 0) AS sellable "
@@ -29,7 +30,15 @@ def _shape(row) -> dict:
     price = row["price_override_paise"]
     if price is None:
         price = row["default_price_paise"]
+    unit = row["unit"]
+    try:
+        unit_price = fabric.cm_price(unit, price)            # fabric: the bill works with the price of one cm
+    except ValueError:
+        unit_price = 0                                       # not whole rupees per metre: shown as "no price"
     return {
+        "unit": unit,
+        "min_cut_cm": row["min_cut_cm"],
+        "price_per_metre_paise": price if fabric.is_metre(unit) else None,
         "variant_id": row["variant_id"],
         "product_id": row["product_id"],
         "name": row["name"],
@@ -39,7 +48,7 @@ def _shape(row) -> dict:
         "sku": row["sku"],
         "hsn": row["hsn"],
         "gst_rate_percent": row["gst_rate_percent"],
-        "price_paise": price,
+        "price_paise": unit_price,
         "sellable": row["sellable"],
         "is_active": bool(row["v_active"] and row["p_active"]),
         "label": f"{row['name']} {row['size']} {row['colour']}",
@@ -121,6 +130,7 @@ def preview_bill(conn, cart, *, mode="regular", intra_state=True, bill_discount_
             "variant_id": info["variant_id"],
             "label": info["label"],
             "qty": line["qty"],
+            "unit": info["unit"],
             "unit_price_paise": line["unit_price_paise"],
             "discount_paise": line["item_discount_paise"] + line["bill_discount_share_paise"],
             "tax_rate_percent": line["rate_percent"],

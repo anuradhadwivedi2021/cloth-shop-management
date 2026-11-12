@@ -212,7 +212,7 @@ def render_bill_image(bill, *, width_px=None) -> Image.Image:
         top = sheet.y
         for part in parts:
             sheet.y += sheet.put(part, y=sheet.y) + 2
-        cells = {"hsn": line["hsn"], "qty": str(line["qty"]), "rate": format_rupees(line["unit_price_paise"], symbol=""),
+        cells = {"hsn": line["hsn"], "qty": line["qty_text"], "rate": format_rupees(line["rate_shown_paise"], symbol=""),
                  "gst": _rate_text(line["rate_percent"]), "taxable": format_rupees(line["taxable_paise"], symbol=""),
                  "amount": format_rupees(line["line_total_paise"], symbol="")}
         for key, x in columns:

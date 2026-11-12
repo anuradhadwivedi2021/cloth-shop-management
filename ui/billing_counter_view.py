@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from core import bill_preview as bp
 from core import commission as commission_core
+from core import fabric
 from core import wallet as wallet_core
 from core.auth import AuthError
 from core.customers import get_customer, search_customers
@@ -79,6 +80,12 @@ def parse_discount(text: str, basis_paise: int) -> int:
 
 # ======================================================================= dialogs
 
+def _shown_price(info) -> str:
+    """The price people see: fabric per metre, everything else per piece."""
+    price = fabric.metre_price(info["unit"], info["price_paise"])
+    return format_rupees(price) + (" / m" if fabric.is_metre(info["unit"]) else "")
+
+
 class VariantPickerDialog(QDialog):
     """Size x colour grid with the stock count in every cell. Out-of-stock cells cannot be chosen."""
 
@@ -88,6 +95,7 @@ class VariantPickerDialog(QDialog):
         self.variant_id, self.qty = None, 1
         allow_negative = get_bool(conn, "allow_negative_stock")
         variants = bp.variants_of_product(conn, product_id)
+        self._variants = variants
         sizes = list(dict.fromkeys(v["size"] for v in variants))
         colours = list(dict.fromkeys(v["colour"] for v in variants))
         self._stock = {v["variant_id"]: v["sellable"] > 0 or allow_negative for v in variants}
@@ -102,9 +110,10 @@ class VariantPickerDialog(QDialog):
             self.grid.setRowHeight(row, 52)
         for v in variants:
             if self._stock[v["variant_id"]]:
-                text = tr("{n} in stock\n{price}", n=v["sellable"], price=format_rupees(v["price_paise"]))
+                text = tr("{n} in stock\n{price}", n=fabric.qty_text(v["unit"], v["sellable"]),
+                          price=_shown_price(v))
             else:
-                text = tr("Out of stock\n{price}", price=format_rupees(v["price_paise"]))
+                text = tr("Out of stock\n{price}", price=_shown_price(v))
             item = QTableWidgetItem(text)
             item.setData(Qt.UserRole, v["variant_id"])
             item.setTextAlignment(Qt.AlignCenter)
@@ -140,7 +149,18 @@ class VariantPickerDialog(QDialog):
         if not self._stock.get(variant_id):
             self.message.setText(tr("That size and colour is out of stock. Choose another cell."))
             return
-        self.variant_id, self.qty = variant_id, self.qty_spin.value()
+        qty = self.qty_spin.value()
+        unit = next((v["unit"] for v in self._variants if v["variant_id"] == variant_id), "piece")
+        if fabric.is_metre(unit):                       # fabric is cut to a length, not counted in pieces
+            text, ok = QInputDialog.getText(self, tr("Length"), tr("Length in metres, for example 2.5"))
+            if not ok:
+                return
+            try:
+                qty = fabric.parse_metres(text)
+            except ValueError as exc:
+                self.message.setText(tr(str(exc)))
+                return
+        self.variant_id, self.qty = variant_id, qty
         self.accept()
 
 
@@ -704,13 +724,24 @@ class BillingCounterView(QWidget):
         if info["sellable"] <= 0:
             text = tr("{item} is out of stock.", item=info["label"])
         else:
-            text = tr("{item}: only {n} in stock.", item=info["label"], n=info["sellable"])
+            text = tr("{item}: only {n} in stock.", item=info["label"], n=fabric.qty_text(info["unit"], info["sellable"]))
         alts = bp.alternatives(self.conn, info["variant_id"])
         if alts:
             text += " " + tr("Available instead: {list}.", list=", ".join(f"{a['size']} {a['colour']} ({a['sellable']})" for a in alts))
         return text
 
-    def add_variant(self, variant_id, qty=1) -> bool:
+    def _ask_length(self, info):
+        """Fabric is cut to a length: ask for the metres. Returns centimetres, or None when cancelled/not valid."""
+        text, ok = QInputDialog.getText(self, tr("Length"), tr("Length in metres, for example 2.5"))
+        if not ok:
+            return None
+        try:
+            return fabric.parse_metres(text)
+        except ValueError as exc:
+            self._say(tr(str(exc)), "error")
+            return None
+
+    def add_variant(self, variant_id, qty=None) -> bool:
         """Put an item on the bill. Blocked (with a reason) when it is inactive, unpriced or not in stock."""
         info = bp.variant_info(self.conn, variant_id)
         if info is None:
@@ -722,6 +753,10 @@ class BillingCounterView(QWidget):
         if info["price_paise"] <= 0:
             self._say(tr("{item} has no selling price. Set the price first.", item=info["label"]), "error")
             return False
+        if qty is None:
+            qty = self._ask_length(info) if fabric.is_metre(info["unit"]) else 1
+            if qty is None:
+                return False
         line = self._line(variant_id)
         wanted = (line["qty"] if line else 0) + qty
         short = self._stock_short(info, wanted)
@@ -742,6 +777,11 @@ class BillingCounterView(QWidget):
             self._say(tr("Quantity must be a whole number, at least 1."), "error")
             return False
         info = bp.variant_info(self.conn, self.cart[row]["variant_id"])
+        try:
+            fabric.check_cut(info["unit"], qty, info["min_cut_cm"])
+        except ValueError as exc:
+            self._say(tr(str(exc)), "error")
+            return False
         short = self._stock_short(info, qty)
         if short:
             self._say(short, "error")
@@ -787,14 +827,22 @@ class BillingCounterView(QWidget):
 
     def _nudge(self, delta):
         row = self._selected_row()
-        if row >= 0 and self.cart[row]["qty"] + delta >= 1:
-            self.set_qty(row, self.cart[row]["qty"] + delta)
+        if row < 0:
+            return
+        info = bp.variant_info(self.conn, self.cart[row]["variant_id"])
+        step = 10 if info and fabric.is_metre(info["unit"]) else 1       # fabric: 10 cm at a time
+        if self.cart[row]["qty"] + delta * step >= 1:
+            self.set_qty(row, self.cart[row]["qty"] + delta * step)
 
     def change_qty_dialog(self):
         row = self._selected_row()
         if row < 0:
             return
-        qty = self._ask_int(tr("Quantity"), tr("New quantity:"), self.cart[row]["qty"], 1, 999)
+        info = bp.variant_info(self.conn, self.cart[row]["variant_id"])
+        if info and fabric.is_metre(info["unit"]):
+            qty = self._ask_length(info)
+        else:
+            qty = self._ask_int(tr("Quantity"), tr("New quantity:"), self.cart[row]["qty"], 1, 999)
         if qty is not None:
             self.set_qty(row, qty)
 
@@ -887,14 +935,16 @@ class BillingCounterView(QWidget):
         preview = self._preview
         self.table.setRowCount(len(self.cart))
         for r, line in enumerate(self.cart):
+            unit = (bp.variant_info(self.conn, line["variant_id"]) or {}).get("unit", "piece")
             if preview:
                 p = preview["lines"][r]
-                cells = [p["label"], str(p["qty"]), format_rupees(p["unit_price_paise"]),
+                cells = [p["label"], fabric.qty_text(unit, p["qty"]),
+                         format_rupees(fabric.metre_price(unit, p["unit_price_paise"])),
                          format_rupees(p["discount_paise"]) if p["discount_paise"] else "",
                          f"{p['tax_rate_percent']:g}", format_rupees(p["line_total_paise"])]
             else:
                 info = bp.variant_info(self.conn, line["variant_id"])
-                cells = [info["label"] if info else "?", str(line["qty"]), "", "", "", ""]
+                cells = [info["label"] if info else "?", fabric.qty_text(unit, line["qty"]), "", "", "", ""]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if c:

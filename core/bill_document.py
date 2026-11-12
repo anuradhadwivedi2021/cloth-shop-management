@@ -20,6 +20,7 @@ Rules (SRS BIL-06, BIL-09, BIL-11, BIL-15):
 import base64
 from html import escape
 
+from core import fabric
 from core.money import format_rupees
 from core.sales import get_sale, reprint_sale
 from core.settings import get_bool, get_setting
@@ -116,10 +117,6 @@ def _when(stamp) -> str:
         return str(stamp or "")
 
 
-def _qty_text(qty) -> str:
-    return str(qty)
-
-
 def _policy_text(conn, words) -> str:
     """The return-policy sentence(s), from the same settings the return rules use."""
     raw = get_setting(conn, "return_window_days")
@@ -169,7 +166,12 @@ def build_bill(conn, sale_id, *, user_id=None, duplicate=False) -> dict:
     lines = []
     summary = {}  # GST rate -> taxable / cgst / sgst / igst (tax invoice only)
     for n, line in enumerate(data["lines"], start=1):
+        unit_row = conn.execute("SELECT p.unit FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?",
+                                (line["variant_id"],)).fetchone()
+        unit = unit_row["unit"] if unit_row else "piece"
         lines.append({
+            "qty_text": fabric.qty_text(unit, line["qty"]),                        # fabric: "2.5 m"
+            "rate_shown_paise": fabric.metre_price(unit, line["unit_price_paise"]),  # fabric: per metre
             "no": n,
             "name": " ".join(part for part in (line["product_name"], line["size"], line["colour"]) if part),
             "hsn": line["hsn"] or "",
@@ -300,7 +302,7 @@ def bill_html(bill) -> str:
         out.append('<table width="100%" cellspacing="0" cellpadding="1">')
         for line in bill["lines"]:
             out.append(f'<tr><td colspan="2"><b>{line["no"]}. {_e(line["name"])}</b></td></tr>')
-            detail = f'{_e(_qty_text(line["qty"]))} x {_e(_money(line["unit_price_paise"]))}'
+            detail = f'{_e(line["qty_text"])} x {_e(_money(line["rate_shown_paise"]))}'
             if show_tax and not narrow:
                 detail += f' &nbsp;({_e(w["hsn"])} {_e(line["hsn"])}, {_e(w["gst"])} {line["rate_percent"]:g}%)'
             out.append(f'<tr><td>{detail}</td><td align="right">{_e(_money(line["line_total_paise"]))}</td></tr>')
@@ -321,7 +323,7 @@ def bill_html(bill) -> str:
             cells = [f'{line["no"]}. {_e(line["name"])}']
             if show_tax:
                 cells.append(_e(line["hsn"]))
-            cells += [_e(_qty_text(line["qty"])), _e(_money(line["unit_price_paise"])),
+            cells += [_e(line["qty_text"]), _e(_money(line["rate_shown_paise"])),
                       _e(_money(line["discount_paise"])) if line["discount_paise"] else ""]
             if show_tax:
                 cells += [_e(_money(line["taxable_paise"])), f'{line["rate_percent"]:g}%']

@@ -59,7 +59,7 @@ _ACTIONS = {
         "customer_data_exported", "customer_erased", "customer_consent_recorded", "customer_consent_withdrawn",
     },
     "records": {
-        "product_created", "product_updated", "product_activated", "variant_updated", "variant_activated",
+        "product_created", "fabric_min_cut_changed", "fabric_piece_received", "product_updated", "product_activated", "variant_updated", "variant_activated",
         "variants_added", "products_imported", "product_image_added", "product_image_removed", "customer_created", "customer_updated", "customer_reactivated", "supplier_created",
         "supplier_updated", "sale_created", "purchase_confirmed", "purchase_draft_saved",
         "purchase_draft_replaced", "purchase_draft_cancelled", "purchase_return_created",

@@ -109,6 +109,33 @@ TEXTS = {
     "Returns taxable": ("रिटर्न (टैक्स से पहले)", "परतावा (करापूर्वी)"),
     "Rate percent": ("दर %", "दर %"),
     "Net sales paise": ("नेट बिक्री", "निव्वळ विक्री"),
+    # ---- fabric by the metre
+    "Fabric": ("कपड़ा (मीटर में)", "कापड (मीटरमध्ये)"),
+    "Roll": ("थान / रोल", "थान / रोल"),
+    "Remnant (cut-off)": ("कतरन / बचा टुकड़ा", "तुकडा / उरलेले कापड"),
+    "Length": ("लंबाई", "लांबी"),
+    "Length in metres, for example 2.5": ("मीटर में लंबाई, जैसे 2.5", "मीटरमध्ये लांबी, उदा. 2.5"),
+    "Roll number or note (optional)": ("रोल नंबर या नोट (ज़रूरी नहीं)", "रोल क्रमांक किंवा नोंद (ऐच्छिक)"),
+    "Shortest cut in metres (blank = none)": ("सबसे छोटा कट मीटर में (खाली = कोई नहीं)", "सर्वात लहान कट मीटरमध्ये (रिकामे = नाही)"),
+    "Add to stock": ("स्टॉक में जोड़ें", "स्टॉकमध्ये जोडा"),
+    "Save shortest cut": ("सबसे छोटा कट सेव करें", "सर्वात लहान कट सेव्ह करा"),
+    "Piece": ("टुकड़ा", "तुकडा"),
+    "Colour": ("रंग", "रंग"),
+    "Reference": ("संदर्भ", "संदर्भ"),
+    "Left": ("बचा हुआ", "उरलेले"),
+    "Rolls and remnants on the shelf": ("शेल्फ पर रोल और कतरन", "शेल्फवरील थान आणि तुकडे"),
+    "Fabric is sold by the metre. To add a fabric, set the product's unit to metre in Products and price it per metre in whole rupees.": (
+        "कपड़ा मीटर के हिसाब से बिकता है। कपड़ा जोड़ने के लिए Products में प्रोडक्ट की यूनिट 'metre' करें और भाव प्रति मीटर पूरे रुपये में रखें।",
+        "कापड मीटरने विकले जाते. कापड जोडण्यासाठी Products मध्ये प्रोडक्टचे एकक 'metre' करा आणि भाव प्रति मीटर पूर्ण रुपयांत ठेवा."),
+    "In stock: {length}. Price: {price} per metre.": ("स्टॉक में: {length}। भाव: {price} प्रति मीटर।", "स्टॉकमध्ये: {length}. भाव: {price} प्रति मीटर."),
+    "No fabric yet.": ("अभी कोई कपड़ा नहीं है।", "अजून कापड नाही."),
+    "Choose a fabric first.": ("पहले कपड़ा चुनें।", "आधी कापड निवडा."),
+    "The length must be a number of metres, like 2.5": ("लंबाई मीटर में संख्या होनी चाहिए, जैसे 2.5", "लांबी मीटरमध्ये संख्या असावी, उदा. 2.5"),
+    "The length must be more than zero.": ("लंबाई शून्य से ज़्यादा होनी चाहिए।", "लांबी शून्यापेक्षा जास्त असावी."),
+    "The length can have at most 2 decimal places (whole centimetres).": ("लंबाई में अधिकतम 2 दशमलव अंक (पूरे सेंटीमीटर) हो सकते हैं।", "लांबीत जास्तीत जास्त 2 दशांश अंक (पूर्ण सेंटीमीटर) असू शकतात."),
+    "Fabric is priced per metre in whole rupees. Change the price to whole rupees.": ("कपड़े का भाव प्रति मीटर पूरे रुपये में होना चाहिए। भाव पूरे रुपये में करें।", "कापडाचा भाव प्रति मीटर पूर्ण रुपयांत असावा. भाव पूर्ण रुपयांत करा."),
+    "A piece is a roll or a remnant.": ("टुकड़ा थान होता है या कतरन।", "तुकडा थान किंवा उरलेले कापड असतो."),
+    "This product is not sold by the metre. Set its unit to metre first.": ("यह प्रोडक्ट मीटर में नहीं बिकता। पहले इसकी यूनिट metre करें।", "हे प्रोडक्ट मीटरने विकले जात नाही. आधी त्याचे एकक metre करा."),
 }
 
 

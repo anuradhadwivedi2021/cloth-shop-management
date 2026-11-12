@@ -496,3 +496,23 @@ def test_main_window_opens_the_real_billing_counter(env):
     assert "New Sale / Billing" not in mw.PENDING
     _dispose(window)
     conn.close()
+
+# ---------------------------------------------------------------- fabric by the metre
+
+def test_fabric_is_asked_in_metres_and_shown_in_metres(view, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    from core import fabric
+    pid = create_product(view.conn, "Cotton cloth", hsn="6205", default_price_paise=25000, unit="metre")  # Rs 250 / m
+    (vid,) = generate_variants(view.conn, pid, ["Free"], ["White"])
+    fabric.receive_piece(view.conn, 1, vid, "roll", "20")
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("2.5", True)))
+    assert view.add_variant(vid)                       # a scan asks for the length
+    assert view.cart[0]["qty"] == 250
+    assert view.table.item(0, 1).text() == "2.5 m"
+    assert "250" in view.table.item(0, 2).text()       # Rs 250 a metre, not Rs 2.50 a centimetre
+    assert view._preview["total_paise"] >= 62500        # 2.5 m at Rs 250, tax on top
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("abc", True)))
+    view.cart[0]["qty"] = 250
+    view.table.selectRow(0)
+    view.change_qty_dialog()
+    assert view.cart[0]["qty"] == 250                  # a bad length changes nothing

@@ -17,7 +17,6 @@ import ast
 import os
 import socket
 from pathlib import Path
-
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
