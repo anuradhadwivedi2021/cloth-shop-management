@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from core import stock_ageing
-from core import commission
+from core import commission, reports_analytics
 from core import report_export, reports_audit, reports_money, reports_purchase, reports_sales, reports_stock
 from core.money import format_rupees
 from core.permissions import has_permission
@@ -107,6 +107,8 @@ REPORTS = [
               lambda c, u, a, b, x: reports_stock.reorder_list(c, user_id=u), needs_dates=False),
     ReportDef("stock_flow", "stock", N_("Stock received and sold"),
               lambda c, u, a, b, x: reports_stock.stock_flow(c, a, b, user_id=u)),
+    ReportDef("sell_through", "stock", N_("Sell-through % by product"),
+              lambda c, u, a, b, x: reports_analytics.sell_through(c, a, b, user_id=u)),
     ReportDef("unsold", "stock", N_("Items that did not sell"),
               lambda c, u, a, b, x: reports_stock.unsold_stock(c, a, b, user_id=u, max_sold=x),
               choices=_choices(N_("Show items that"), UNSOLD_TEXT)),
