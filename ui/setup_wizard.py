@@ -43,6 +43,7 @@ class SetupPage(QWidget):
     """Emits `done(conn, session)` when the owner has saved the recovery key and pressed Finish."""
 
     done = Signal(object, object)
+    use_counter = Signal()          # this PC is a second counter, not a new shop
 
     def __init__(self, folder, parent=None):
         super().__init__(parent)
@@ -73,6 +74,10 @@ class SetupPage(QWidget):
         buttons.addStretch(1)
         buttons.addWidget(self.next_btn)
         col.addLayout(buttons)
+        self.counter_btn = QPushButton("This is a second counter: connect to the main counter")
+        self.counter_btn.setObjectName("link")
+        self.counter_btn.clicked.connect(self.use_counter.emit)
+        col.addWidget(self.counter_btn)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

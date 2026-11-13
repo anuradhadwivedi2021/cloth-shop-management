@@ -30,6 +30,11 @@ def _paths(folder):
     return folder / DB_FILE, folder / KEY_FILE
 
 
+def database_path(folder):
+    """Where the shop database file is (used by the second-counter server on the main PC)."""
+    return _paths(folder)[0]
+
+
 def shop_exists(folder) -> bool:
     db, keys = _paths(folder)
     return db.exists() and keys.exists()

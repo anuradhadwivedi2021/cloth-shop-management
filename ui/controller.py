@@ -6,6 +6,8 @@ from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QStackedWidget
 
 from core import shop
+from lan import service as lan_service
+from lan.client import RemoteConnection
 from core.session import SessionLocked
 from core.shop_settings import get_shop_profile
 from ui.login_page import LockPage, LoginPage
@@ -32,6 +34,7 @@ class AppController(QStackedWidget):
             self.addWidget(page)
 
         self.setup_page.done.connect(self._signed_in)
+        self.setup_page.use_counter.connect(self._use_counter)
         self.login_page.signed_in.connect(self._signed_in)
         self.lock_page.unlocked.connect(self._unlocked)
         self.lock_page.sign_out.connect(self.sign_out)
@@ -56,12 +59,22 @@ class AppController(QStackedWidget):
     def _signed_in(self, conn, session) -> None:
         self._drop_main()
         self.conn, self.session = conn, session
-        self.main = MainWindow(conn, session, get_shop_profile(conn), folder=self.folder)
+        counter_mode = isinstance(conn, RemoteConnection)          # a second counter shows only the billing-side screens
+        self.main = MainWindow(conn, session, get_shop_profile(conn), folder=self.folder, counter_mode=counter_mode)
+        if not counter_mode:
+            lan_service.autostart(conn, session, self.folder)
         self.main.lock_requested.connect(self.lock)
         self.main.restored.connect(self.after_restore)
         self.main.sign_out_requested.connect(self.sign_out)
         self.addWidget(self.main)
         self.setCurrentWidget(self.main)
+
+    def _use_counter(self) -> None:
+        """This PC has no shop of its own: it is a second counter. Ask where the main counter is."""
+        self.setCurrentWidget(self.login_page)
+        self.login_page.choose_counter()
+        if self.login_page.remote is None:                           # cancelled: back to set-up
+            self.setCurrentWidget(self.setup_page)
 
     def _drop_main(self) -> None:
         if self.main is not None:
@@ -115,6 +128,7 @@ class AppController(QStackedWidget):
                 self.lock()
 
     def closeEvent(self, event) -> None:
+        lan_service.stop()
         self.close_database()
         super().closeEvent(event)
 

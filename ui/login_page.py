@@ -7,6 +7,9 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from core import auth, shop
+from lan import service as lan_service
+from lan.client import connect_counter
+from lan.protocol import LanError
 from core.session import SessionLocked
 from ui.widgets import PasswordField, centered, form, label, make_card
 
@@ -15,6 +18,8 @@ log = logging.getLogger("clothshop")
 
 def friendly_error(exc: Exception, code: str) -> str:
     """Short reason for the screen; the technical detail goes to the local log only (no passwords)."""
+    if isinstance(exc, LanError):
+        return str(exc)
     if isinstance(exc, auth.AccountLocked):
         return f"Too many wrong attempts. Please wait {exc.seconds} seconds and try again."
     if isinstance(exc, (auth.AuthError, ValueError, SessionLocked)):
@@ -76,6 +81,11 @@ class LoginPage(QWidget):
         self.forgot = QPushButton("Forgot password? Use recovery key")
         self.forgot.setObjectName("link")
         col.addWidget(self.forgot)
+        self.remote = None                         # (host, port, code) when this PC is a second counter
+        self.counter_btn = QPushButton("Connect to the main counter")
+        self.counter_btn.setObjectName("link")
+        col.addWidget(self.counter_btn)
+        self.counter_btn.clicked.connect(self.choose_counter)
         self.countdown = _Countdown(self.button, self.error)
         self.button.clicked.connect(self._sign_in)
         self.password.returnPressed.connect(self._sign_in)
@@ -84,6 +94,21 @@ class LoginPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(centered(card))
+
+    def choose_counter(self) -> None:
+        """Switch between this PC's own shop and the main counter on the shop network."""
+        if self.remote is not None and shop.shop_exists(self.folder):       # back to this PC's own shop
+            self.remote = None
+            self.title.setText("Cloth Shop")
+            self.counter_btn.setText("Connect to the main counter")
+            self.forgot.setVisible(True)
+            return
+        dialog = CounterLinkDialog(self.folder, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.remote = dialog.link
+            self.title.setText("Second counter")
+            self.counter_btn.setText("Use this PC's own shop" if shop.shop_exists(self.folder) else "Change the main counter")
+            self.forgot.setVisible(False)
 
     def reset(self, shop_name="") -> None:
         if shop_name:
@@ -96,7 +121,11 @@ class LoginPage(QWidget):
         if not self.button.isEnabled():
             return
         try:
-            conn, session = shop.open_shop(self.folder, self.username.text().strip(), self.password.text())
+            if self.remote is not None:
+                conn, session = connect_counter(self.remote["host"], self.remote["port"], self.remote["code"],
+                                                self.username.text().strip(), self.password.text())
+            else:
+                conn, session = shop.open_shop(self.folder, self.username.text().strip(), self.password.text())
         except auth.AccountLocked as exc:
             self.password.clear()
             self.countdown.start(exc.seconds)
@@ -113,6 +142,62 @@ class LoginPage(QWidget):
         dialog = RecoverDialog(self.folder, self)
         if dialog.exec() == QDialog.Accepted and dialog.result_pair:
             self.signed_in.emit(*dialog.result_pair)
+
+
+class CounterLinkDialog(QDialog):
+    """Where the main counter is: its address and the pairing code shown on its Second Counter screen."""
+
+    def __init__(self, folder, parent=None):
+        super().__init__(parent)
+        self.folder, self.link = folder, None
+        self.setWindowTitle("Connect to the main counter")
+        self.setMinimumWidth(460)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(24, 20, 24, 20)
+        col.setSpacing(12)
+        col.addWidget(label("On the main PC open Second Counter, start it, and read the address and the pairing code."))
+        saved = lan_service.load_link(folder)
+        lay = form()
+        self.host = QLineEdit(saved["host"])
+        self.host.setPlaceholderText("192.168.1.20")
+        self.port = QLineEdit(str(saved["port"]))
+        self.code = QLineEdit(saved["code"])
+        self.code.setPlaceholderText("XXXX-XXXX-XX")
+        lay.addRow("Main PC address", self.host)
+        lay.addRow("Port", self.port)
+        lay.addRow("Pairing code", self.code)
+        col.addLayout(lay)
+        self.error = label("", "error")
+        col.addWidget(self.error)
+        buttons = QHBoxLayout()
+        self.ok = QPushButton("Connect")
+        self.ok.setObjectName("primary")
+        cancel = QPushButton("Cancel")
+        buttons.addStretch(1)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.ok)
+        col.addLayout(buttons)
+        self.ok.clicked.connect(self._connect)
+        cancel.clicked.connect(self.reject)
+
+    def _connect(self) -> None:
+        from lan.client import RemoteConnection
+        try:
+            port = int(self.port.text().strip())
+            test = RemoteConnection(self.host.text().strip(), port, self.code.text())      # checks address, code and reachability
+            test.close()
+        except ValueError:
+            self.error.setText("The port must be a number, normally 8765.")
+            return
+        except LanError as exc:
+            self.error.setText(str(exc))
+            return
+        self.link = {"host": self.host.text().strip(), "port": port, "code": self.code.text().strip()}
+        try:
+            lan_service.save_link(self.folder, **self.link)
+        except OSError:
+            pass
+        self.accept()
 
 
 class RecoverDialog(QDialog):

@@ -53,8 +53,14 @@ MENU = [
     (N_("Reports"), ("view_reports",)),
     (N_("Users and Permissions"), ("manage_users",)),
     (N_("Backup and Restore"), ("create_backup", "restore_backup")),
+    (N_("Second Counter"), ("manage_settings",)),
     (N_("Settings"), ("manage_settings",)),
 ]
+
+# A second counter (another PC on the shop network) shows only the billing-side screens; stock, purchases, cash,
+# users, backup and settings stay on the main PC.
+COUNTER_MENU = {"Dashboard", "New Sale / Billing", "Estimates", "Customers", "Gift Vouchers", "Alterations",
+                "Sales Returns and Exchanges"}
 
 ROLE_NAMES = {"owner": N_("Owner"), "cashier": N_("Cashier"), "stock": N_("Stock staff"), "accountant": N_("Accountant")}
 
@@ -80,7 +86,7 @@ class MainWindow(QWidget):
     sign_out_requested = Signal()
     restored = Signal()  # a backup was restored; the database is closed, go back to sign-in
 
-    def __init__(self, conn, session, profile: dict, parent=None, folder=None):
+    def __init__(self, conn, session, profile: dict, parent=None, folder=None, counter_mode=False):
         super().__init__(parent)
         load_language_from_settings(conn)  # the shop's language (English if not set)
         self.conn, self.session = conn, session
@@ -111,6 +117,8 @@ class MainWindow(QWidget):
         self.pages = CurrentPageStack()
         self.allowed = []
         for text, needs in MENU:
+            if counter_mode and text not in COUNTER_MENU:
+                continue
             if needs is None or any(has_permission(conn, session.user_id, perm) for perm in needs):
                 self.allowed.append(text)
                 self.menu.addItem(QListWidgetItem(tr(text)))

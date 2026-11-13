@@ -9,6 +9,10 @@ inside, two ways that do not depend on a quiet network:
      check, every screen of the main window) while every attempt to open a network connection is caught.
      There must be none.
 
+The one exception is the optional second counter on the shop's own network (the lan/ package). It is off until the
+owner starts it, it refuses every address that is not a private shop-network address (tests/test_lan.py proves
+that), and the whole-day test below opens its screen without it touching the network.
+
 A network capture on the real shop PC for a working day (Wireshark or the Windows firewall log) is still
 the final proof on the day of delivery; these tests keep it from ever regressing before then.
 """
@@ -17,6 +21,7 @@ import ast
 import os
 import socket
 from pathlib import Path
+
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

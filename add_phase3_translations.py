@@ -136,6 +136,33 @@ TEXTS = {
     "Fabric is priced per metre in whole rupees. Change the price to whole rupees.": ("कपड़े का भाव प्रति मीटर पूरे रुपये में होना चाहिए। भाव पूरे रुपये में करें।", "कापडाचा भाव प्रति मीटर पूर्ण रुपयांत असावा. भाव पूर्ण रुपयांत करा."),
     "A piece is a roll or a remnant.": ("टुकड़ा थान होता है या कतरन।", "तुकडा थान किंवा उरलेले कापड असतो."),
     "This product is not sold by the metre. Set its unit to metre first.": ("यह प्रोडक्ट मीटर में नहीं बिकता। पहले इसकी यूनिट metre करें।", "हे प्रोडक्ट मीटरने विकले जात नाही. आधी त्याचे एकक metre करा."),
+    # ---- second counter (LAN)
+    "Second Counter": ("दूसरा काउंटर", "दुसरा काउंटर"),
+    "This PC's address": ("इस PC का पता", "या PC चा पत्ता"),
+    "Pairing code (type it on the second PC):": ("पेयरिंग कोड (दूसरे PC पर टाइप करें):", "पेअरिंग कोड (दुसऱ्या PC वर टाइप करा):"),
+    "Make a new pairing code": ("नया पेयरिंग कोड बनाएँ", "नवीन पेअरिंग कोड बनवा"),
+    "Start the second counter automatically when this app opens": ("ऐप खुलते ही दूसरा काउंटर अपने आप शुरू करें", "अॅप उघडताच दुसरा काउंटर आपोआप सुरू करा"),
+    "A second PC on the same shop WiFi or LAN can bill on this shop at the same time. Nothing goes to the internet. Keep this app open on this PC while the second counter works.": (
+        "दुकान के उसी WiFi या LAN पर दूसरा PC इसी दुकान पर एक साथ बिल बना सकता है। इंटरनेट पर कुछ नहीं जाता। दूसरा काउंटर चलते समय इस PC पर यह ऐप खुला रखें।",
+        "दुकानाच्या त्याच WiFi किंवा LAN वरील दुसरा PC याच दुकानावर एकाच वेळी बिल करू शकतो. इंटरनेटवर काहीही जात नाही. दुसरा काउंटर चालू असताना या PC वर हे अॅप उघडे ठेवा."),
+    "The second counter is OFF.": ("दूसरा काउंटर बंद है।", "दुसरा काउंटर बंद आहे."),
+    "The second counter is ON: {address}": ("दूसरा काउंटर चालू है: {address}", "दुसरा काउंटर चालू आहे: {address}"),
+    "Start the second counter": ("दूसरा काउंटर शुरू करें", "दुसरा काउंटर सुरू करा"),
+    "Stop the second counter": ("दूसरा काउंटर बंद करें", "दुसरा काउंटर बंद करा"),
+    "On the second PC: sign-in page > Connect to the main counter > address {address}, then the pairing code above.": (
+        "दूसरे PC पर: साइन-इन पेज > Connect to the main counter > पता {address}, फिर ऊपर का पेयरिंग कोड।",
+        "दुसऱ्या PC वर: साइन-इन पेज > Connect to the main counter > पत्ता {address}, मग वरचा पेअरिंग कोड."),
+    "Type the main PC's address as numbers, like 192.168.1.20.": ("मुख्य PC का पता अंकों में लिखें, जैसे 192.168.1.20।", "मुख्य PC चा पत्ता अंकांत लिहा, उदा. 192.168.1.20."),
+    "Only an address on your own shop network (like 192.168.1.20) is allowed.": ("सिर्फ़ आपके दुकान के नेटवर्क का पता (जैसे 192.168.1.20) चलेगा।", "फक्त तुमच्या दुकानाच्या नेटवर्कचा पत्ता (उदा. 192.168.1.20) चालेल."),
+    "The pairing code has 10 letters and numbers, like K7M2-QX9P-4T.": ("पेयरिंग कोड में 10 अक्षर और अंक होते हैं, जैसे K7M2-QX9P-4T।", "पेअरिंग कोडमध्ये 10 अक्षरे आणि अंक असतात, उदा. K7M2-QX9P-4T."),
+    "The main counter cannot be reached. Check that its PC is on, the app is open and 'Second Counter' is started.": (
+        "मुख्य काउंटर से संपर्क नहीं हो पा रहा। देखें कि उसका PC चालू है, ऐप खुला है और 'दूसरा काउंटर' शुरू है।",
+        "मुख्य काउंटरशी संपर्क होत नाही. त्याचा PC चालू आहे, अॅप उघडे आहे आणि 'दुसरा काउंटर' सुरू आहे ते तपासा."),
+    "The main counter refused the connection. Check the pairing code.": ("मुख्य काउंटर ने कनेक्शन मना किया। पेयरिंग कोड जाँचें।", "मुख्य काउंटरने कनेक्शन नाकारले. पेअरिंग कोड तपासा."),
+    "The connection to the main counter was lost. Sign in again.": ("मुख्य काउंटर से कनेक्शन टूट गया। फिर से साइन-इन करें।", "मुख्य काउंटरशी कनेक्शन तुटले. पुन्हा साइन-इन करा."),
+    "Show this PC's addresses": ("इस PC के पते दिखाएँ", "या PC चे पत्ते दाखवा"),
+    "Detect automatically": ("अपने आप पता करें", "आपोआप शोधा"),
+    "This PC is not on a shop network (no private address found).": ("यह PC दुकान के नेटवर्क पर नहीं है (कोई निजी पता नहीं मिला)।", "हा PC दुकानाच्या नेटवर्कवर नाही (खाजगी पत्ता सापडला नाही)."),
 }
 
 
